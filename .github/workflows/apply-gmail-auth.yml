@@ -1,0 +1,118 @@
+name: Apply Gmail auth feature
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - agent/gmail-auth
+    paths:
+      - '.github/workflows/apply-gmail-auth.yml'
+
+jobs:
+  apply:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply tested Gmail patches
+        run: |
+          git apply .github/patches/gmail-core.patch
+          git apply .github/patches/gmail-app.patch
+          git apply .github/patches/gmail-styles.patch
+          git apply .github/patches/gmail-misc.patch
+      - name: Finalize version and release build configuration
+        shell: python
+        run: |
+          from pathlib import Path
+
+          replacements = {
+              Path('pyproject.toml'): [('version = "0.2.3"', 'version = "0.2.4"')],
+              Path('packaging/windows/MailAgent.iss'): [('#define MyAppVersion "0.2.3"', '#define MyAppVersion "0.2.4"')],
+              Path('apps/launcher/mail_agent_launcher/main.py'): [('APP_VERSION = "0.2.3"', 'APP_VERSION = "0.2.4"')],
+          }
+          for path, pairs in replacements.items():
+              text = path.read_text(encoding='utf-8')
+              for old, new in pairs:
+                  if old not in text:
+                      raise SystemExit(f'Expected version marker missing in {path}: {old}')
+                  text = text.replace(old, new, 1)
+              path.write_text(text, encoding='utf-8')
+
+          workflow = Path('.github/workflows/build-installers.yml')
+          text = workflow.read_text(encoding='utf-8')
+          win_old = '''      - name: Install build dependencies
+        run: python -m pip install -e . pyinstaller
+'''
+          win_new = '''      - name: Install build dependencies
+        run: python -m pip install -e ".[dev]" pyinstaller
+      - name: Embed Google OAuth desktop client
+        shell: pwsh
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID || secrets.GOOGLE_OAUTH_CLIENT_ID }}
+        run: |
+          $clientId = $env:GOOGLE_OAUTH_CLIENT_ID
+          $content = @"
+          \"\"\"Build-time OAuth defaults. Environment variables override these values.\"\"\"
+
+          GOOGLE_CLIENT_ID = \"$clientId\"
+          "@
+          Set-Content -Path "apps/gateway/mail_agent_gateway/oauth_defaults.py" -Value $content -Encoding utf8
+          if ([string]::IsNullOrWhiteSpace($clientId)) {
+            Write-Warning "GOOGLE_OAUTH_CLIENT_ID is not configured; Gmail OAuth will be disabled in this build."
+          }
+      - name: Run tests
+        run: python -m pytest -q
+'''
+          if win_old not in text:
+              raise SystemExit('Windows build dependency block changed unexpectedly')
+          text = text.replace(win_old, win_new, 1)
+
+          standalone_old = '''      - run: python -m pip install -e . pyinstaller
+'''
+          standalone_new = '''      - run: python -m pip install -e ".[dev]" pyinstaller
+      - name: Embed Google OAuth desktop client
+        env:
+          GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID || secrets.GOOGLE_OAUTH_CLIENT_ID }}
+        run: |
+          python - <<'PY'
+          import os
+          from pathlib import Path
+          client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+          Path("apps/gateway/mail_agent_gateway/oauth_defaults.py").write_text(
+              '\"\"\"Build-time OAuth defaults. Environment variables override these values.\"\"\"\\n\\n'
+              f'GOOGLE_CLIENT_ID = {client_id!r}\\n',
+              encoding="utf-8",
+          )
+          PY
+      - name: Run tests
+        run: python -m pytest -q
+'''
+          if standalone_old not in text:
+              raise SystemExit('Standalone build dependency block changed unexpectedly')
+          text = text.replace(standalone_old, standalone_new, 1)
+          workflow.write_text(text, encoding='utf-8')
+      - name: Install test dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Validate feature
+        run: |
+          python -m pytest -q
+          python -m compileall -q apps packages connectors
+          node --check apps/web/app.js
+          git diff --check
+      - name: Remove staging machinery
+        run: |
+          rm -rf .github/patches
+          rm .github/workflows/apply-gmail-auth.yml
+      - name: Commit finalized feature
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: add Gmail OAuth and API sync"
+          git push origin HEAD:agent/gmail-auth
