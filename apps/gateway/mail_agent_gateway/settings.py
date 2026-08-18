@@ -18,6 +18,8 @@ class Settings:
     ]
     ollama_base_url = os.getenv("OLLAMA_BASE_URL", "http://127.0.0.1:11434")
     codex_binary = os.getenv("CODEX_BINARY", "codex")
+    sync_interval_seconds = max(15, int(os.getenv("MAIL_AGENT_SYNC_INTERVAL_SECONDS", "60")))
+    auto_sync_enabled = os.getenv("MAIL_AGENT_AUTO_SYNC", "true").lower() in {"1", "true", "yes", "on"}
 
 
 settings = Settings()

@@ -41,5 +41,14 @@ class MailboxProbeRequest(BaseModel):
     smtp_port: int = Field(default=465, ge=1, le=65535)
 
 
+class SyncRunRequest(BaseModel):
+    mailbox_id: str | None = Field(default=None, max_length=128)
+    limit: int = Field(default=100, ge=1, le=1000)
+
+
+class ApprovalDecisionRequest(BaseModel):
+    actor: str = Field(default="local-user", min_length=1, max_length=200)
+
+
 class AgentAnalyzeRequest(BaseModel):
     message: MailMessageContext

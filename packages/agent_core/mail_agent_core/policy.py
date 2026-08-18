@@ -66,12 +66,12 @@ class PolicyEngine:
             )
 
         if action in self._HIGH_IMPACT:
-            # v0.1 intentionally keeps all high-impact actions human-approved.
+            # v0.2 intentionally keeps all high-impact actions human-approved.
             return PolicyDecision(
                 allowed=True,
                 requires_approval=True,
                 risk="high",
-                reason="Sending, forwarding, and deletion require approval in v0.1",
+                reason="Sending, forwarding, and deletion require approval in v0.2",
             )
 
         return PolicyDecision(allowed=False, requires_approval=False, risk="high", reason="Unknown action")
