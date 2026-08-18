@@ -1,0 +1,232 @@
+diff --git a/.env.example b/.env.example
+index 260932c..9113d9c 100644
+--- a/.env.example
++++ b/.env.example
+@@ -8,3 +8,4 @@ MAIL_AGENT_AUTO_SYNC=true
+ MAIL_AGENT_SYNC_INTERVAL_SECONDS=60
+ OLLAMA_BASE_URL=http://127.0.0.1:11434
+ CODEX_BINARY=codex
++MAIL_AGENT_GOOGLE_CLIENT_ID=
+diff --git a/tests/test_oauth_foundation.py b/tests/test_oauth_foundation.py
+index 520940f..522cd1f 100644
+--- a/tests/test_oauth_foundation.py
++++ b/tests/test_oauth_foundation.py
+@@ -12,7 +12,7 @@ def test_google_pkce_and_authorization_url():
+     assert len(verifier) >= 43
+     assert challenge
+     url = GoogleOAuthClient("client-id").authorization_url(
+-        redirect_uri="http://127.0.0.1:8765/v1/oauth/google/callback",
++        redirect_uri="http://127.0.0.1:8765",
+         state="state-value",
+         code_challenge=challenge,
+     )
+diff --git a/apps/gateway/mail_agent_gateway/oauth_defaults.py b/apps/gateway/mail_agent_gateway/oauth_defaults.py
+new file mode 100644
+index 0000000..6940c9b
+--- /dev/null
++++ b/apps/gateway/mail_agent_gateway/oauth_defaults.py
+@@ -0,0 +1,7 @@
++"""Build-time OAuth defaults.
++
++Release builds may replace GOOGLE_CLIENT_ID before packaging. Runtime environment variables always
++win, so developers can test without rebuilding the application.
++"""
++
++GOOGLE_CLIENT_ID = ""
+diff --git a/tests/test_gmail_oauth.py b/tests/test_gmail_oauth.py
+new file mode 100644
+index 0000000..aca3b94
+--- /dev/null
++++ b/tests/test_gmail_oauth.py
+@@ -0,0 +1,134 @@
++import asyncio
++from pathlib import Path
++from urllib.parse import parse_qs, urlparse
++
++import mail_agent_gateway.oauth_controller as controller_module
++from mail_agent_gateway.audit import AuditLog
++from mail_agent_gateway.oauth_controller import OAuthController
++from mail_agent_gateway.oauth_runtime import OAuthTokenVault
++from mail_agent_gateway.state import JsonStateStore
++from mail_agent_gateway.vault import CredentialVault
++from mail_agent_gateway.key_store import FileMasterKeyStore
++from mail_agent_google import GoogleOAuthClient, GoogleTokenSet
++from mail_agent_google.client import GMAIL_SCOPE, make_pkce_pair
++
++
++class GoogleSettings:
++    google_client_id = "desktop-client.apps.googleusercontent.com"
++    google_client_secret = None
++    google_redirect_uri = "http://127.0.0.1:8765"
++    microsoft_client_id = ""
++    microsoft_redirect_uri = "http://localhost:8765/v1/oauth/microsoft/callback"
++    microsoft_tenant = "common"
++
++
++def make_controller(tmp_path: Path) -> tuple[OAuthController, JsonStateStore, CredentialVault]:
++    state = JsonStateStore(tmp_path / "state.json")
++    vault = CredentialVault(
++        tmp_path / "secrets.vault",
++        master_key_store=FileMasterKeyStore(tmp_path / "vault.key"),
++    )
++    controller = OAuthController(
++        settings=GoogleSettings(),
++        state_store=state,
++        vault=vault,
++        audit_log=AuditLog(tmp_path / "audit.jsonl"),
++    )
++    return controller, state, vault
++
++
++def test_google_authorization_url_is_pkce_desktop_flow():
++    _, challenge = make_pkce_pair()
++    url = GoogleOAuthClient("client-id").authorization_url(
++        redirect_uri="http://127.0.0.1:8765",
++        state="csrf-state",
++        code_challenge=challenge,
++    )
++    query = parse_qs(urlparse(url).query)
++    assert query["redirect_uri"] == ["http://127.0.0.1:8765"]
++    assert query["response_type"] == ["code"]
++    assert query["scope"] == [GMAIL_SCOPE]
++    assert query["access_type"] == ["offline"]
++    assert query["state"] == ["csrf-state"]
++    assert query["code_challenge_method"] == ["S256"]
++    assert "openid" not in query["scope"][0]
++
++
++def test_google_callback_persists_mailbox_and_refresh_token(tmp_path: Path, monkeypatch):
++    controller, state_store, vault = make_controller(tmp_path)
++    session = controller.sessions.create(
++        provider="google",
++        code_verifier="v" * 64,
++        redirect_uri=GoogleSettings.google_redirect_uri,
++    )
++
++    class FakeOAuthClient:
++        def __init__(self, *_args, **_kwargs):
++            pass
++
++        async def exchange_code(self, **_kwargs):
++            return GoogleTokenSet(
++                access_token="access-token",
++                refresh_token="refresh-token",
++                expires_at=9_999_999_999,
++                scope=GMAIL_SCOPE,
++            )
++
++    class FakeGmailClient:
++        def __init__(self, access_token: str):
++            assert access_token == "access-token"
++
++        async def profile(self):
++            return {"emailAddress": "person@gmail.com", "historyId": "123"}
++
++    monkeypatch.setattr(controller_module, "GoogleOAuthClient", FakeOAuthClient)
++    monkeypatch.setattr(controller_module, "GoogleGmailClient", FakeGmailClient)
++
++    result = asyncio.run(controller.complete_google(state=session.state, code="auth-code"))
++    assert result["status"] == "complete"
++    assert result["email_address"] == "person@gmail.com"
++
++    stored = list(state_store.read()["mailboxes"].values())[0]
++    assert stored["connector"] == "gmail_api"
++    assert stored["oauth_provider"] == "google"
++    assert stored["credential_state"] == "encrypted-oauth-vault"
++    assert stored["scope"] == GMAIL_SCOPE
++    assert "access-token" not in state_store.path.read_text(encoding="utf-8")
++    assert "refresh-token" not in state_store.path.read_text(encoding="utf-8")
++
++    token_data = OAuthTokenVault(vault).load(stored["credential_ref"])
++    assert token_data["refresh_token"] == "refresh-token"
++    assert token_data["access_token"] == "access-token"
++
++
++def test_google_callback_requires_refresh_token(tmp_path: Path, monkeypatch):
++    controller, state_store, _ = make_controller(tmp_path)
++    session = controller.sessions.create(
++        provider="google",
++        code_verifier="v" * 64,
++        redirect_uri=GoogleSettings.google_redirect_uri,
++    )
++
++    class FakeOAuthClient:
++        def __init__(self, *_args, **_kwargs):
++            pass
++
++        async def exchange_code(self, **_kwargs):
++            return GoogleTokenSet(
++                access_token="access-token",
++                refresh_token=None,
++                expires_at=9_999_999_999,
++                scope=GMAIL_SCOPE,
++            )
++
++    monkeypatch.setattr(controller_module, "GoogleOAuthClient", FakeOAuthClient)
++
++    try:
++        asyncio.run(controller.complete_google(state=session.state, code="auth-code"))
++    except RuntimeError as exc:
++        assert "refresh token" in str(exc).lower()
++    else:
++        raise AssertionError("OAuth completion should fail without a refresh token")
++
++    assert controller.sessions.get(session.state).status == "error"
++    assert not state_store.read().get("mailboxes")
+diff --git a/docs/GMAIL_AUTH.md b/docs/GMAIL_AUTH.md
+new file mode 100644
+index 0000000..41e1da0
+--- /dev/null
++++ b/docs/GMAIL_AUTH.md
+@@ -0,0 +1,51 @@
++# Gmail OAuth
++
++MAIL-AGENT connects Gmail accounts through Google's OAuth 2.0 installed-app flow. End users do not
++enter IMAP hosts, SMTP ports, Google passwords, or app passwords.
++
++## End-user flow
++
++1. Click **Mit Google anmelden** in onboarding.
++2. MAIL-AGENT opens Google's authorization page in the system browser.
++3. The user selects a Google account and grants Gmail access.
++4. Google redirects to MAIL-AGENT's loopback listener on `127.0.0.1`.
++5. MAIL-AGENT exchanges the authorization code using PKCE, reads the Gmail profile, encrypts the
++   refresh/access token set in the local credential vault, and creates the mailbox automatically.
++6. Future syncs refresh access tokens without prompting the user again.
++
++The requested scope is `https://www.googleapis.com/auth/gmail.modify`. It supports reading,
++composing, sending, and modifying mail while avoiding the broader `https://mail.google.com/` scope
++that also permits permanent deletion without Trash.
++
++## One-time release-owner setup
++
++Google requires every OAuth application to have a Google-issued OAuth client ID. This is an
++application identity, not a per-user API key.
++
++For release builds:
++
++1. Create/select the MAIL-AGENT project in Google Cloud.
++2. Enable the Gmail API.
++3. Configure the OAuth consent screen.
++4. Create an OAuth client with application type **Desktop app**.
++5. Add the client ID to the GitHub repository variable `GOOGLE_OAUTH_CLIENT_ID` (a repository secret
++   with the same name is also accepted).
++6. Rebuild the installer.
++
++The build pipeline embeds only the desktop client ID. Runtime environment variable
++`MAIL_AGENT_GOOGLE_CLIENT_ID` overrides it for development builds.
++
++For public distribution, Google's verification requirements for restricted Gmail scopes must be
++completed before treating the OAuth application as production-ready. Test users can be used while
++the consent screen remains in testing mode.
++
++## Security properties
++
++- Authorization Code flow with PKCE (`S256`).
++- Random per-login `state` value for CSRF protection.
++- System browser, not an embedded credential webview.
++- Loopback redirect on `127.0.0.1` for the desktop application.
++- Gmail password is never requested by MAIL-AGENT.
++- OAuth tokens are stored only in the encrypted local credential vault.
++- Refresh tokens are required so background synchronization can continue without repeated login.
++- The remote agent registry never receives Gmail tokens or message contents.
