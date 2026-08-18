@@ -4,6 +4,7 @@ from pathlib import Path
 
 from mail_agent_launcher.main import (
     configure_environment,
+    gateway_health,
     log_path,
     user_data_dir,
     wait_for_gateway,
@@ -69,3 +70,16 @@ def test_run_server_disables_uvicorn_log_config(monkeypatch):
     launcher.run_server(object(), 9999, "Test", errors)
     assert errors.empty()
     assert captured["log_config"] is None
+
+
+def test_stop_servers_requests_graceful_shutdown():
+    import mail_agent_launcher.main as launcher
+
+    class Server:
+        should_exit = False
+
+    first = Server()
+    second = Server()
+    launcher.stop_servers({"Gateway": first, "Registry": second})
+    assert first.should_exit is True
+    assert second.should_exit is True

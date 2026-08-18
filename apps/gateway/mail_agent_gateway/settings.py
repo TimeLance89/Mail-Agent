@@ -34,6 +34,14 @@ class Settings:
         "MAIL_AGENT_MICROSOFT_REDIRECT_URI",
         f"http://localhost:{port}/v1/oauth/microsoft/callback",
     )
+    update_feed_url = os.getenv(
+        "MAIL_AGENT_UPDATE_FEED_URL",
+        "https://api.github.com/repos/TimeLance89/Mail-Agent/releases/tags/preview-latest",
+    )
+    update_release_page = os.getenv(
+        "MAIL_AGENT_UPDATE_RELEASE_PAGE",
+        "https://github.com/TimeLance89/Mail-Agent/releases/tag/preview-latest",
+    )
 
 
 settings = Settings()
