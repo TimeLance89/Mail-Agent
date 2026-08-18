@@ -1,0 +1,55 @@
+diff --git a/.github/workflows/build-installers.yml b/.github/workflows/build-installers.yml
+index 9dbe635..0000000 100644
+--- a/.github/workflows/build-installers.yml
++++ b/.github/workflows/build-installers.yml
+@@ -20,7 +20,24 @@ jobs:
+         with:
+           python-version: '3.12'
+       - name: Install build dependencies
+-        run: python -m pip install -e . pyinstaller
++        run: python -m pip install -e ".[dev]" pyinstaller
++      - name: Embed Google OAuth desktop client
++        shell: pwsh
++        env:
++          GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID || secrets.GOOGLE_OAUTH_CLIENT_ID }}
++        run: |
++          $clientId = $env:GOOGLE_OAUTH_CLIENT_ID
++          $content = @"
++          \"\"\"Build-time OAuth defaults. Environment variables override these values.\"\"\"
++
++          GOOGLE_CLIENT_ID = \"$clientId\"
++          "@
++          Set-Content -Path "apps/gateway/mail_agent_gateway/oauth_defaults.py" -Value $content -Encoding utf8
++          if ([string]::IsNullOrWhiteSpace($clientId)) {
++            Write-Warning "GOOGLE_OAUTH_CLIENT_ID is not configured; Gmail OAuth will be disabled in this build."
++          }
++      - name: Run tests
++        run: python -m pytest -q
+       - name: Build standalone app
+         shell: pwsh
+         run: >-
+@@ -101,7 +118,23 @@ jobs:
+       - uses: actions/setup-python@v5
+         with:
+           python-version: '3.12'
+-      - run: python -m pip install -e . pyinstaller
++      - run: python -m pip install -e ".[dev]" pyinstaller
++      - name: Embed Google OAuth desktop client
++        env:
++          GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID || secrets.GOOGLE_OAUTH_CLIENT_ID }}
++        run: |
++          python - <<'PY'
++          import os
++          from pathlib import Path
++          client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
++          Path("apps/gateway/mail_agent_gateway/oauth_defaults.py").write_text(
++              '\"\"\"Build-time OAuth defaults. Environment variables override these values.\"\"\"\n\n'
++              f'GOOGLE_CLIENT_ID = {client_id!r}\n',
++              encoding="utf-8",
++          )
++          PY
++      - name: Run tests
++        run: python -m pytest -q
+       - name: Build standalone app
+         run: >-
+           pyinstaller --noconfirm --clean --onefile
