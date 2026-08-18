@@ -272,10 +272,12 @@ class MailStore:
     def is_agent_processed(self, mailbox_id: str, message_id: str) -> bool:
         with self._lock, self._connect() as conn:
             row = conn.execute(
-                "SELECT 1 FROM agent_processing WHERE mailbox_id=? AND message_id=?",
+                "SELECT status FROM agent_processing WHERE mailbox_id=? AND message_id=?",
                 (mailbox_id, message_id),
             ).fetchone()
-        return row is not None
+        if row is None:
+            return False
+        return row["status"] != "error"
 
     def record_agent_processing(
         self,
