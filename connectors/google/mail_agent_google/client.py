@@ -24,6 +24,24 @@ def make_pkce_pair() -> tuple[str, str]:
     return verifier, challenge
 
 
+def _token_error_message(response: httpx.Response) -> str:
+    try:
+        payload = response.json()
+    except ValueError:
+        detail = response.text.strip()[:500]
+        return f"Google OAuth token endpoint returned HTTP {response.status_code}: {detail or 'no response body'}"
+
+    error = str(payload.get("error") or f"http_{response.status_code}")
+    description = str(payload.get("error_description") or "").strip()
+    error_uri = str(payload.get("error_uri") or "").strip()
+    parts = [f"Google OAuth token error: {error}"]
+    if description:
+        parts.append(description)
+    if error_uri:
+        parts.append(error_uri)
+    return " — ".join(parts)
+
+
 @dataclass(frozen=True)
 class GoogleTokenSet:
     access_token: str
@@ -65,6 +83,7 @@ class GoogleOAuthClient:
             "response_type": "code",
             "scope": GMAIL_SCOPE,
             "access_type": "offline",
+            "prompt": "consent",
             "state": state,
             "code_challenge": code_challenge,
             "code_challenge_method": "S256",
@@ -85,7 +104,8 @@ class GoogleOAuthClient:
             data["client_secret"] = self.client_secret
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(GOOGLE_TOKEN_URL, data=data)
-            response.raise_for_status()
+            if response.is_error:
+                raise RuntimeError(_token_error_message(response))
             return GoogleTokenSet.from_response(response.json())
 
     async def refresh(self, refresh_token: str) -> GoogleTokenSet:
@@ -98,7 +118,8 @@ class GoogleOAuthClient:
             data["client_secret"] = self.client_secret
         async with httpx.AsyncClient(timeout=self.timeout) as client:
             response = await client.post(GOOGLE_TOKEN_URL, data=data)
-            response.raise_for_status()
+            if response.is_error:
+                raise RuntimeError(_token_error_message(response))
             return GoogleTokenSet.from_response(response.json(), refresh_token)
 
 
