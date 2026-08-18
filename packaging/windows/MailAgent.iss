@@ -1,5 +1,5 @@
 #define MyAppName "MAIL-AGENT"
-#define MyAppVersion "0.2.8"
+#define MyAppVersion "0.2.9"
 #define MyAppPublisher "MAIL-AGENT"
 #define MyAppExeName "Mail-Agent.exe"
 
@@ -11,6 +11,7 @@ AppPublisher={#MyAppPublisher}
 DefaultDirName={localappdata}\Programs\Mail-Agent
 DefaultGroupName=MAIL-AGENT
 DisableProgramGroupPage=yes
+UsePreviousAppDir=yes
 PrivilegesRequired=lowest
 OutputDir=..\..\dist\installer
 OutputBaseFilename=Mail-Agent-Setup
@@ -18,7 +19,7 @@ Compression=lzma2
 SolidCompression=yes
 WizardStyle=modern
 CloseApplications=yes
-RestartApplications=yes
+RestartApplications=no
 UninstallDisplayIcon={app}\{#MyAppExeName}
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
@@ -35,3 +36,4 @@ Name: "desktopicon"; Description: "Desktop-Verknüpfung erstellen"; GroupDescrip
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "MAIL-AGENT jetzt starten"; Flags: nowait postinstall skipifsilent
+Filename: "{app}\{#MyAppExeName}"; Flags: nowait skipifnotsilent
