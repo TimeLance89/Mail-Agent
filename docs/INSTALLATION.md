@@ -1,18 +1,25 @@
 # Installation
 
-MAIL-AGENT is designed to be installed like a normal desktop application. End users should not need
-Python, pip, uvicorn, Git, Docker, or a terminal.
+MAIL-AGENT is installed like a normal desktop application. End users do not need Python, pip,
+uvicorn, Git, Docker, GitHub Actions, a terminal, or knowledge about local service ports.
 
-## Windows — recommended
+## Windows — end-user installation
 
-1. Download `Mail-Agent-Setup.exe` from the latest GitHub release.
-2. Double-click the installer.
-3. Click **Installieren**.
-4. Launch **MAIL-AGENT** from the Start menu or optional desktop shortcut.
-5. The browser opens automatically and the onboarding begins.
+1. Open the MAIL-AGENT Preview release page.
+2. Download **`Mail-Agent-Setup.exe`** directly.
+3. Double-click the downloaded file.
+4. Click **Installieren**.
+5. Start **MAIL-AGENT** from the Start menu or desktop shortcut.
+6. MAIL-AGENT starts its local services automatically and opens the onboarding.
 
-The Windows installer uses a bundled standalone executable. Gateway, local registry development
-service, database migrations, web UI, and storage initialization start automatically.
+There is no ZIP extraction and no GitHub Actions workflow involved in the end-user path.
+
+The preview release uses the fixed tag `preview-latest`. Every successful build from `main` replaces
+the installer on that release, so testers always have one stable place to obtain the current setup.
+
+The Windows installer contains the standalone MAIL-AGENT application. Gateway, local registry
+service, database migrations, web UI, storage initialization, and health checks are started
+implicitly by the desktop launcher.
 
 User data is kept outside the installation directory under:
 
@@ -20,7 +27,13 @@ User data is kept outside the installation directory under:
 %LOCALAPPDATA%\Mail-Agent
 ```
 
-Uninstalling the application does not silently delete the user's mailbox data or identity.
+Uninstalling the application does not silently delete the user's mailbox data or agent identity.
+
+## Public distribution target
+
+The private repository is a development and test channel. A public product release should expose the
+same installer through a normal product download page, so users only see a **Download for Windows**
+button and never need a GitHub account.
 
 ## macOS / Linux
 
@@ -29,7 +42,7 @@ installation. Native signed/notarized packages are planned for the distribution 
 
 ## Developer installation
 
-The manual Python setup remains available only for development:
+The manual Python setup is development-only:
 
 ```bash
 python -m venv .venv
@@ -44,7 +57,7 @@ The launcher resolves a per-user data directory, starts the required local servi
 gateway health endpoint, and opens `http://127.0.0.1:8765` in the default browser. No service ports
 or commands need to be entered by the user.
 
-## Release builds
+## Automated builds
 
 `.github/workflows/build-installers.yml` creates:
 
@@ -52,4 +65,5 @@ or commands need to be entered by the user.
 - a standalone binary for macOS
 - a standalone binary for Linux
 
-Tagged builds can be published directly as GitHub release assets.
+Every successful `main` build updates the `preview-latest` prerelease with direct downloadable
+binaries. Version tags (`v*`) continue to create normal versioned releases.
