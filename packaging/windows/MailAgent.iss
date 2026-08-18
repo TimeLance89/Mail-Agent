@@ -29,7 +29,7 @@ Name: "{autoprograms}\MAIL-AGENT"; Filename: "{app}\{#MyAppExeName}"
 Name: "{autodesktop}\MAIL-AGENT"; Filename: "{app}\{#MyAppExeName}"; Tasks: desktopicon
 
 [Tasks]
-Name: "desktopicon"; Description: "Desktop-Verknüppfung erstellen"; GroupDescription: "Zusätzliche Verknüpfungen:"; Flags: unchecked
+Name: "desktopicon"; Description: "Desktop-Verknüpfung erstellen"; GroupDescription: "Zusätzliche Verknüpfungen:"; Flags: unchecked
 
 [Run]
 Filename: "{app}\{#MyAppExeName}"; Description: "MAIL-AGENT jetzt starten"; Flags: nowait postinstall skipifsilent
