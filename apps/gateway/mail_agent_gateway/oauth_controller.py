@@ -108,6 +108,8 @@ class OAuthController:
                 redirect_uri=session.redirect_uri,
                 code_verifier=session.code_verifier,
             )
+            if not tokens.refresh_token:
+                raise RuntimeError("Google did not issue a refresh token; reconnect the mailbox")
             profile = await GoogleGmailClient(tokens.access_token).profile()
             email = profile.get("emailAddress")
             if not email:
@@ -123,6 +125,7 @@ class OAuthController:
                     "username": email,
                     "credential_ref": credential_ref,
                     "credential_state": "encrypted-oauth-vault",
+                    "scope": tokens.scope,
                 }
             )
             self.sessions.update(state, status="complete", mailbox_id=mailbox_id, email_address=email)

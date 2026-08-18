@@ -3,6 +3,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from .oauth_defaults import GOOGLE_CLIENT_ID
+
 
 class Settings:
     host = os.getenv("MAIL_AGENT_GATEWAY_HOST", "127.0.0.1")
@@ -20,11 +22,11 @@ class Settings:
     codex_binary = os.getenv("CODEX_BINARY", "codex")
     sync_interval_seconds = max(15, int(os.getenv("MAIL_AGENT_SYNC_INTERVAL_SECONDS", "60")))
     auto_sync_enabled = os.getenv("MAIL_AGENT_AUTO_SYNC", "true").lower() in {"1", "true", "yes", "on"}
-    google_client_id = os.getenv("MAIL_AGENT_GOOGLE_CLIENT_ID", "").strip()
+    google_client_id = os.getenv("MAIL_AGENT_GOOGLE_CLIENT_ID", GOOGLE_CLIENT_ID).strip()
     google_client_secret = os.getenv("MAIL_AGENT_GOOGLE_CLIENT_SECRET", "").strip() or None
     google_redirect_uri = os.getenv(
         "MAIL_AGENT_GOOGLE_REDIRECT_URI",
-        f"http://127.0.0.1:{port}/v1/oauth/google/callback",
+        f"http://127.0.0.1:{port}",
     )
     microsoft_client_id = os.getenv("MAIL_AGENT_MICROSOFT_CLIENT_ID", "").strip()
     microsoft_tenant = os.getenv("MAIL_AGENT_MICROSOFT_TENANT", "common").strip() or "common"

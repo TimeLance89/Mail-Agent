@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 APP_NAME = "MAIL-AGENT"
-APP_VERSION = "0.2.3"
+APP_VERSION = "0.2.4"
 GATEWAY_PORT = 8765
 REGISTRY_PORT = 8770
 GATEWAY_URL = f"http://127.0.0.1:{GATEWAY_PORT}"
