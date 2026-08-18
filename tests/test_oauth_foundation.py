@@ -12,7 +12,7 @@ def test_google_pkce_and_authorization_url():
     assert len(verifier) >= 43
     assert challenge
     url = GoogleOAuthClient("client-id").authorization_url(
-        redirect_uri="http://127.0.0.1:8765/v1/oauth/google/callback",
+        redirect_uri="http://127.0.0.1:8765",
         state="state-value",
         code_challenge=challenge,
     )
