@@ -2,6 +2,8 @@ import asyncio
 from pathlib import Path
 from urllib.parse import parse_qs, urlparse
 
+import httpx
+
 import mail_agent_gateway.oauth_controller as controller_module
 from mail_agent_gateway.audit import AuditLog
 from mail_agent_gateway.oauth_controller import OAuthController
@@ -10,7 +12,7 @@ from mail_agent_gateway.state import JsonStateStore
 from mail_agent_gateway.vault import CredentialVault
 from mail_agent_gateway.key_store import FileMasterKeyStore
 from mail_agent_google import GoogleOAuthClient, GoogleTokenSet
-from mail_agent_google.client import GMAIL_SCOPE, make_pkce_pair
+from mail_agent_google.client import GMAIL_SCOPE, _token_error_message, make_pkce_pair
 
 
 class GoogleSettings:
@@ -49,9 +51,20 @@ def test_google_authorization_url_is_pkce_desktop_flow():
     assert query["response_type"] == ["code"]
     assert query["scope"] == [GMAIL_SCOPE]
     assert query["access_type"] == ["offline"]
+    assert query["prompt"] == ["consent"]
     assert query["state"] == ["csrf-state"]
     assert query["code_challenge_method"] == ["S256"]
     assert "openid" not in query["scope"][0]
+
+
+def test_google_token_error_preserves_provider_details():
+    response = httpx.Response(
+        400,
+        json={"error": "invalid_grant", "error_description": "Bad Request"},
+    )
+    message = _token_error_message(response)
+    assert "invalid_grant" in message
+    assert "Bad Request" in message
 
 
 def test_google_callback_persists_mailbox_and_refresh_token(tmp_path: Path, monkeypatch):
