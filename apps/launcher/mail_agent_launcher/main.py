@@ -19,12 +19,14 @@ from typing import Any
 from mail_agent_core.update import UpdateClient
 
 APP_NAME = "MAIL-AGENT"
-APP_VERSION = "0.2.5"
+APP_VERSION = "0.2.9"
 GATEWAY_PORT = 8765
 REGISTRY_PORT = 8770
 GATEWAY_URL = f"http://127.0.0.1:{GATEWAY_PORT}"
 UPDATE_FEED_URL = os.getenv("MAIL_AGENT_UPDATE_FEED_URL", "https://api.github.com/repos/TimeLance89/Mail-Agent/releases/tags/preview-latest")
 UPDATE_RELEASE_PAGE = os.getenv("MAIL_AGENT_UPDATE_RELEASE_PAGE", "https://github.com/TimeLance89/Mail-Agent/releases/tag/preview-latest")
+UPDATE_TOKEN = os.getenv("MAIL_AGENT_UPDATE_TOKEN", "").strip() or None
+AUTO_UPDATE_CHECK_SECONDS = max(3600, int(os.getenv("MAIL_AGENT_AUTO_UPDATE_CHECK_SECONDS", "21600")))
 
 
 def user_data_dir() -> Path:
@@ -122,6 +124,7 @@ def show_info_dialog(message: str) -> None:
 def show_confirm_dialog(message: str, *, title: str = "MAIL-AGENT") -> bool:
     if platform.system() == "Windows":
         try:
+            # MB_YESNO | MB_ICONINFORMATION, IDYES == 6
             return ctypes.windll.user32.MessageBoxW(None, message, title, 0x04 | 0x40) == 6
         except Exception:
             pass
@@ -269,10 +272,18 @@ def open_app_browser() -> bool:
 
 
 class DesktopTray:
-    def __init__(self, *, servers: dict[str, Any]) -> None:
+    def __init__(self, *, servers: dict[str, Any], data_dir: Path) -> None:
         self.servers = servers
+        self.data_dir = data_dir
         self.icon: Any | None = None
-        self.update_client = UpdateClient(feed_url=UPDATE_FEED_URL, release_page=UPDATE_RELEASE_PAGE)
+        self.update_client = UpdateClient(
+            feed_url=UPDATE_FEED_URL,
+            release_page=UPDATE_RELEASE_PAGE,
+            token=UPDATE_TOKEN,
+        )
+        self._update_lock = threading.Lock()
+        self._quit_event = threading.Event()
+        self._last_prompted_version: str | None = None
 
     @staticmethod
     def _image() -> Any:
@@ -289,40 +300,86 @@ class DesktopTray:
         open_app_browser()
 
     def check_updates(self, *_: Any) -> None:
-        threading.Thread(target=self._check_updates_worker, daemon=True, name="mail-agent-update-check").start()
+        threading.Thread(
+            target=self._check_updates_worker,
+            kwargs={"interactive": True},
+            daemon=True,
+            name="mail-agent-update-check",
+        ).start()
 
-    def _check_updates_worker(self) -> None:
-        info = self.update_client.check(APP_VERSION)
-        if info.error:
-            logging.warning("Update feed unavailable: %s", info.error)
-            if show_confirm_dialog(
-                "Der automatische Update-Kanal ist momentan nicht erreichbar.\n\n"
-                "Soll die MAIL-AGENT Download-Seite im Browser geöffnet werden?",
-                title="MAIL-AGENT – Update",
-            ):
-                webbrowser.open(info.release_page)
+    def _auto_update_loop(self) -> None:
+        # Give the local services a moment to settle before doing network I/O.
+        if self._quit_event.wait(12):
             return
-        if not info.available:
-            show_info_dialog(f"MAIL-AGENT {APP_VERSION} ist aktuell.")
-            return
-        if not show_confirm_dialog(
-            f"MAIL-AGENT {info.latest_version} ist verfügbar.\n\nJetzt installieren?",
-            title="MAIL-AGENT – Update verfügbar",
-        ):
+        while not self._quit_event.is_set():
+            self._check_updates_worker(interactive=False)
+            if self._quit_event.wait(AUTO_UPDATE_CHECK_SECONDS):
+                return
+
+    def _stage_update_installer(self, info: Any) -> Path:
+        updates_dir = self.data_dir / "updates"
+        updates_dir.mkdir(parents=True, exist_ok=True)
+        destination = updates_dir / f"Mail-Agent-Setup-{info.latest_version}.exe"
+        return self.update_client.download(info, destination)
+
+    def _launch_installer_after_exit(self, installer: Path) -> None:
+        if platform.system() != "Windows":
+            raise RuntimeError("Automatische In-Place-Updates werden derzeit nur unter Windows unterstützt")
+        helper = installer.with_name("apply-mail-agent-update.cmd")
+        helper.write_text(
+            "@echo off\r\n"
+            "timeout /t 2 /nobreak >nul\r\n"
+            f'"{installer}" /SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS\r\n'
+            'del "%~f0" >nul 2>&1\r\n',
+            encoding="utf-8",
+        )
+        creationflags = getattr(subprocess, "CREATE_NO_WINDOW", 0)
+        subprocess.Popen(
+            [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", str(helper)],
+            close_fds=True,
+            creationflags=creationflags,
+        )
+
+    def _check_updates_worker(self, *, interactive: bool) -> None:
+        if not self._update_lock.acquire(blocking=False):
             return
         try:
-            installer = self.update_client.download(info)
-            logging.info("Launching update installer %s", installer)
-            subprocess.Popen(
-                [str(installer), "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"],
-                close_fds=True,
-            )
+            info = self.update_client.check(APP_VERSION)
+            if info.error:
+                logging.warning("Update feed unavailable: %s", info.error)
+                if interactive and show_confirm_dialog(
+                    "Der automatische Update-Kanal ist momentan nicht erreichbar.\n\n"
+                    "Soll die MAIL-AGENT Download-Seite im Browser geöffnet werden?",
+                    title="MAIL-AGENT – Update",
+                ):
+                    webbrowser.open(info.release_page)
+                return
+            if not info.available:
+                if interactive:
+                    show_info_dialog(f"MAIL-AGENT {APP_VERSION} ist aktuell.")
+                return
+            if not interactive and self._last_prompted_version == info.latest_version:
+                return
+            self._last_prompted_version = info.latest_version
+            if not show_confirm_dialog(
+                f"MAIL-AGENT {info.latest_version} ist verfügbar.\n\n"
+                "Das Update wird geprüft, installiert und MAIL-AGENT danach automatisch neu gestartet.\n\n"
+                "Jetzt aktualisieren?",
+                title="MAIL-AGENT – Update verfügbar",
+            ):
+                return
+            installer = self._stage_update_installer(info)
+            logging.info("Verified update staged at %s", installer)
+            self._launch_installer_after_exit(installer)
             self.quit()
         except Exception as exc:
             logging.exception("Update installation failed")
             show_error_dialog("Update konnte nicht installiert werden.", details=str(exc))
+        finally:
+            self._update_lock.release()
 
     def quit(self, *_: Any) -> None:
+        self._quit_event.set()
         stop_servers(self.servers)
         if self.icon is not None:
             try:
@@ -345,6 +402,11 @@ class DesktopTray:
                 pystray.MenuItem("Beenden", self.quit),
             )
             self.icon = pystray.Icon("MAIL-AGENT", self._image(), "MAIL-AGENT", menu)
+            threading.Thread(
+                target=self._auto_update_loop,
+                daemon=True,
+                name="mail-agent-auto-update",
+            ).start()
             self.icon.run()
             return True
         except Exception:
@@ -362,6 +424,7 @@ def _run(args: argparse.Namespace) -> int:
         if splash:
             splash.set_status("Komponenten werden geladen …")
 
+        # Imports happen after environment setup because both services resolve storage paths at import time.
         from mail_agent_registry.main import app as registry_app
         from mail_agent_gateway.main import app as gateway_app
 
@@ -411,10 +474,11 @@ def _run(args: argparse.Namespace) -> int:
         if not args.no_browser and not open_app_browser():
             show_info_dialog(f"MAIL-AGENT läuft. Öffne im Browser:\n\n{GATEWAY_URL}")
 
-        tray = DesktopTray(servers=servers)
+        tray = DesktopTray(servers=servers, data_dir=data_dir)
         if tray.run():
             return 0
 
+        # Fallback for platforms without a tray backend.
         try:
             while gateway_thread.is_alive():
                 gateway_thread.join(timeout=0.5)
@@ -440,6 +504,7 @@ def main() -> int:
     try:
         return _run(args)
     except BaseException as exc:
+        # Last-resort guard for windowed/frozen builds: never disappear silently.
         data_dir = (args.data_dir or user_data_dir()).resolve()
         try:
             configure_environment(data_dir)
