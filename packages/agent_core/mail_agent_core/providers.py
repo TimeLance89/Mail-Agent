@@ -7,6 +7,7 @@ import shutil
 import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -91,14 +92,24 @@ class CodexCliProvider(LLMProvider):
     def __init__(self, binary: str = "codex"):
         self.binary = binary
 
-    async def health(self) -> ProviderHealth:
+    def _command(self, *args: str, platform_name: str | None = None) -> list[str]:
         path = shutil.which(self.binary)
         if not path:
-            return ProviderHealth(False, "Codex CLI not found in PATH")
+            raise RuntimeError("Codex CLI ist nicht installiert")
+        platform_name = platform_name or os.name
+        if platform_name == "nt" and Path(path).suffix.lower() in {".cmd", ".bat"}:
+            command_line = subprocess.list2cmdline([path, *args])
+            return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", command_line]
+        return [path, *args]
+
+    async def health(self) -> ProviderHealth:
+        try:
+            command = self._command("--version")
+        except RuntimeError as exc:
+            return ProviderHealth(False, str(exc))
         try:
             proc = await asyncio.create_subprocess_exec(
-                path,
-                "--version",
+                *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -114,24 +125,18 @@ class CodexCliProvider(LLMProvider):
         return ["default"]
 
     def start_chatgpt_login(self) -> str:
-        path = shutil.which(self.binary)
-        if not path:
-            raise RuntimeError("Codex CLI ist nicht installiert")
+        command = self._command("--login")
         creationflags = 0
         if os.name == "nt":
             creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         subprocess.Popen(
-            [path, "--login"],
+            command,
             close_fds=True,
             creationflags=creationflags,
         )
         return "Offizieller ChatGPT-Login wurde im Codex-Client gestartet"
 
     async def complete(self, request: CompletionRequest) -> str:
-        path = shutil.which(self.binary)
-        if not path:
-            raise RuntimeError("Codex CLI not installed")
-
         envelope = {
             "system": request.system,
             "task": request.user,
@@ -142,13 +147,14 @@ class CodexCliProvider(LLMProvider):
             ],
         }
         prompt = json.dumps(envelope, ensure_ascii=False)
-        args = [path, "exec", "--skip-git-repo-check"]
+        args = ["exec", "--skip-git-repo-check"]
         if request.model and request.model != "default":
             args.extend(["-m", request.model])
         args.append(prompt)
+        command = self._command(*args)
 
         proc = await asyncio.create_subprocess_exec(
-            *args,
+            *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
