@@ -37,12 +37,14 @@ class PolicyEngine:
                 proposal.metadata.get("agent_signature_required") is not True
                 or not proposal.metadata.get("agent_id")
                 or not proposal.metadata.get("agent_fingerprint")
+                or proposal.metadata.get("agent_signature_algorithm") != "ed25519"
+                or not proposal.metadata.get("agent_message_signature")
             ):
                 return PolicyDecision(
                     allowed=False,
                     requires_approval=False,
                     risk="high",
-                    reason="Outbound agent mail without mandatory Agent-ID signature is forbidden",
+                    reason="Outbound agent mail without mandatory signed Agent-ID is forbidden",
                 )
 
         if action in self._READ_ONLY:
@@ -83,7 +85,6 @@ class PolicyEngine:
             )
 
         if action in self._HIGH_IMPACT:
-            # Sending, forwarding, and deletion stay human-approved irrespective of autonomy.
             return PolicyDecision(
                 allowed=True,
                 requires_approval=True,
