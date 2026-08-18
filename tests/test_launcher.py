@@ -83,3 +83,36 @@ def test_stop_servers_requests_graceful_shutdown():
     launcher.stop_servers({"Gateway": first, "Registry": second})
     assert first.should_exit is True
     assert second.should_exit is True
+
+
+def test_update_helper_runs_silent_installer_after_process_exit(tmp_path: Path, monkeypatch):
+    import mail_agent_launcher.main as launcher
+
+    captured = {}
+
+    def fake_popen(args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+
+        class Process:
+            pass
+
+        return Process()
+
+    monkeypatch.setattr(launcher.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(launcher.subprocess, "Popen", fake_popen)
+    monkeypatch.setenv("COMSPEC", "cmd.exe")
+
+    tray = launcher.DesktopTray(servers={}, data_dir=tmp_path)
+    installer = tmp_path / "updates" / "Mail-Agent-Setup-0.2.9.exe"
+    installer.parent.mkdir(parents=True)
+    tray._launch_installer_after_exit(installer)
+
+    helper = installer.with_name("apply-mail-agent-update.cmd")
+    script = helper.read_text(encoding="utf-8")
+    assert "timeout /t 2" in script
+    assert "/VERYSILENT" in script
+    assert "/SUPPRESSMSGBOXES" in script
+    assert "/CLOSEAPPLICATIONS" in script
+    assert str(installer) in script
+    assert captured["args"][-1] == str(helper)
