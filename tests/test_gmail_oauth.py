@@ -5,12 +5,14 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 
 import mail_agent_gateway.oauth_controller as controller_module
+import mail_agent_google.client as google_client_module
 from mail_agent_gateway.audit import AuditLog
+from mail_agent_gateway.key_store import FileMasterKeyStore
 from mail_agent_gateway.oauth_controller import OAuthController
 from mail_agent_gateway.oauth_runtime import OAuthTokenVault
+from mail_agent_gateway.settings import settings as gateway_settings
 from mail_agent_gateway.state import JsonStateStore
 from mail_agent_gateway.vault import CredentialVault
-from mail_agent_gateway.key_store import FileMasterKeyStore
 from mail_agent_google import GoogleOAuthClient, GoogleTokenSet
 from mail_agent_google.client import GMAIL_SCOPE, _token_error_message, make_pkce_pair
 
@@ -39,6 +41,11 @@ def make_controller(tmp_path: Path) -> tuple[OAuthController, JsonStateStore, Cr
     return controller, state, vault
 
 
+def test_packaged_google_desktop_credentials_are_complete():
+    assert gateway_settings.google_client_id.endswith(".apps.googleusercontent.com")
+    assert gateway_settings.google_client_secret
+
+
 def test_google_authorization_url_is_pkce_desktop_flow():
     _, challenge = make_pkce_pair()
     url = GoogleOAuthClient("client-id").authorization_url(
@@ -55,6 +62,46 @@ def test_google_authorization_url_is_pkce_desktop_flow():
     assert query["state"] == ["csrf-state"]
     assert query["code_challenge_method"] == ["S256"]
     assert "openid" not in query["scope"][0]
+
+
+def test_google_token_exchange_sends_desktop_client_secret(monkeypatch):
+    captured = {}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, exc_type, exc, tb):
+            return False
+
+        async def post(self, url, data):
+            captured.update(data)
+            return httpx.Response(
+                200,
+                request=httpx.Request("POST", url),
+                json={
+                    "access_token": "access-token",
+                    "refresh_token": "refresh-token",
+                    "expires_in": 3600,
+                    "token_type": "Bearer",
+                },
+            )
+
+    monkeypatch.setattr(google_client_module.httpx, "AsyncClient", FakeAsyncClient)
+    tokens = asyncio.run(
+        GoogleOAuthClient("client-id", "desktop-client-secret").exchange_code(
+            code="auth-code",
+            redirect_uri="http://127.0.0.1:8765",
+            code_verifier="v" * 64,
+        )
+    )
+    assert tokens.access_token == "access-token"
+    assert captured["client_secret"] == "desktop-client-secret"
+    assert captured["code_verifier"] == "v" * 64
+    assert captured["redirect_uri"] == "http://127.0.0.1:8765"
 
 
 def test_google_token_error_preserves_provider_details():
