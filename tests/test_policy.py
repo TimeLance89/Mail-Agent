@@ -31,6 +31,8 @@ def proposal(action: MailActionType) -> MailActionProposal:
             "agent_signature_required": True,
             "agent_id": "ma_test",
             "agent_fingerprint": "f" * 64,
+            "agent_signature_algorithm": "ed25519",
+            "agent_message_signature": "signed-message",
         }
     return MailActionProposal(action=action, mailbox_id="mailbox-1", metadata=metadata)
 
