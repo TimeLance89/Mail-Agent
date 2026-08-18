@@ -64,6 +64,7 @@ class AgentRuntime:
             model=str(config["model"]),
             message=message,
             identity=identity,
+            sign_payload=self.identity_manager.sign,
         )
 
         approval = None
