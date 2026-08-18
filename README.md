@@ -26,8 +26,9 @@ It produces a typed `MailActionProposal`; only the gateway can evaluate and late
 High-impact actions such as sending, forwarding, and deletion remain human approval-gated in v0.2.
 
 Mailbox passwords are encrypted at rest using AES-256-GCM and are not written to `state.json` or the
-mail SQLite database. The vault master key is protected with Windows DPAPI, macOS Keychain, or Linux Secret Service when
-available, with a permission-restricted local-file fallback.
+mail SQLite database. The vault master key is kept in a separate permission-restricted local file.
+The vault master key is wrapped by the available OS credential facility where supported, with a
+permission-restricted local fallback for environments without a native secret store.
 
 The agent's private Ed25519 key is generated locally and never sent to the registry. Only the public
 key, fingerprint, owner, and installation metadata are registered remotely.
@@ -116,6 +117,13 @@ docs/
 
 ## Next v0.2.x work
 
-Gmail OAuth and Microsoft 365/Outlook OAuth are the next connector layer. The local encrypted vault,
-mail store, sync service, and approval queue introduced here are deliberately connector-neutral so
-OAuth refresh tokens can use the same trusted storage path without changing the agent core.
+Gmail OAuth is integrated through the Gmail API. Microsoft 365/Outlook OAuth is the next connector
+layer. The local encrypted vault, mail store, sync service, and approval queue remain connector-neutral.
+
+## Desktop experience
+
+MAIL-AGENT is designed as a background desktop agent, not a terminal service. The Windows build starts the local gateway and registry, opens the UI, and remains available through a system-tray icon. From the tray the user can reopen MAIL-AGENT, check for updates, or stop the agent cleanly.
+
+Gmail onboarding is intentionally one-click for end users: **Mit Google anmelden** opens the system browser, Google handles account selection and consent, and the browser returns to MAIL-AGENT automatically. OAuth client registration is a publisher/build concern and is never exposed as an end-user form.
+
+Installed builds update from a release feed rather than requiring Git or a source checkout. When a newer Windows installer is available, MAIL-AGENT can download it, launch the installer, shut down its local services, and restart through the installer flow. Private development feeds may require an authenticated/public distribution endpoint; production users are never expected to configure GitHub credentials.
