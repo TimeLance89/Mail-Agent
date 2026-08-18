@@ -30,7 +30,7 @@ jobs:
           $content = @"
           \"\"\"Build-time OAuth defaults. Environment variables override these values.\"\"\"
 
-          GOOGLE_CLIENT_ID = \"$clientId\"
+          GOOGLE_CLIENT_ID = "$clientId"
           "@
           Set-Content -Path "apps/gateway/mail_agent_gateway/oauth_defaults.py" -Value $content -Encoding utf8
           if ([string]::IsNullOrWhiteSpace($clientId)) {
@@ -46,6 +46,7 @@ jobs:
           --paths apps/launcher --paths apps/gateway --paths apps/registry --paths packages/agent_core
           --paths connectors/imap --paths connectors/google --paths connectors/microsoft
           --add-data "apps/web:mail_agent_web"
+          --hidden-import pystray._win32
           apps/launcher/mail_agent_launcher/main.py
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
@@ -90,15 +91,16 @@ jobs:
       - name: Create or update direct-download preview release
         shell: bash
         run: |
-          NOTES="Automatisch gebaut aus dem aktuellen main-Stand. Für Windows einfach Mail-Agent-Setup.exe herunterladen und ausführen."
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          NOTES="MAIL-AGENT Preview v${VERSION}. Automatisch gebaut aus dem aktuellen main-Stand."
           if gh release view preview-latest >/dev/null 2>&1; then
             gh release edit preview-latest \
-              --title "MAIL-AGENT Preview" \
+              --title "MAIL-AGENT Preview v${VERSION}" \
               --prerelease \
               --notes "$NOTES"
           else
             gh release create preview-latest \
-              --title "MAIL-AGENT Preview" \
+              --title "MAIL-AGENT Preview v${VERSION}" \
               --prerelease \
               --notes "$NOTES"
           fi
