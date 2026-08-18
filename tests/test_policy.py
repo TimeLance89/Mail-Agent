@@ -25,7 +25,14 @@ def profile(mode: AutonomyMode, usage: UsageType = UsageType.PRIVATE) -> AgentPr
 
 
 def proposal(action: MailActionType) -> MailActionProposal:
-    return MailActionProposal(action=action, mailbox_id="mailbox-1")
+    metadata = {}
+    if action in {MailActionType.CREATE_DRAFT, MailActionType.SEND_REPLY, MailActionType.FORWARD}:
+        metadata = {
+            "agent_signature_required": True,
+            "agent_id": "ma_test",
+            "agent_fingerprint": "f" * 64,
+        }
+    return MailActionProposal(action=action, mailbox_id="mailbox-1", metadata=metadata)
 
 
 def test_observer_can_read_but_not_draft(engine: PolicyEngine):
