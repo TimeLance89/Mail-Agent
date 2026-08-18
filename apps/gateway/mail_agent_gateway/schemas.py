@@ -41,6 +41,10 @@ class MailboxProbeRequest(BaseModel):
     smtp_port: int = Field(default=465, ge=1, le=65535)
 
 
+class OAuthStartRequest(BaseModel):
+    login_hint: str | None = Field(default=None, max_length=320)
+
+
 class SyncRunRequest(BaseModel):
     mailbox_id: str | None = Field(default=None, max_length=128)
     limit: int = Field(default=100, ge=1, le=1000)

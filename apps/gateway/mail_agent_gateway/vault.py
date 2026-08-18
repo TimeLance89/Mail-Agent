@@ -7,36 +7,42 @@ import threading
 from pathlib import Path
 from typing import Any
 
+from .key_store import FileMasterKeyStore, MasterKeyStore
+
 from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 
 
 class CredentialVault:
     """Small local encrypted secret store.
 
-    v0.2 deliberately keeps the master key in a separate permission-restricted file.
-    This protects secrets from accidental DB/state disclosure; OS keychain integration is
-    the next hardening layer for protection against full local account compromise.
+    Secrets use AES-256-GCM. The master key is supplied by a platform-specific key store
+    (DPAPI / Keychain / Secret Service when available, with a file fallback).
     """
 
     VERSION = 1
 
-    def __init__(self, vault_path: Path, key_path: Path):
+    def __init__(
+        self,
+        vault_path: Path,
+        key_path: Path | None = None,
+        *,
+        master_key_store: MasterKeyStore | None = None,
+    ):
         self.vault_path = vault_path
-        self.key_path = key_path
         self.vault_path.parent.mkdir(parents=True, exist_ok=True)
-        self.key_path.parent.mkdir(parents=True, exist_ok=True)
+        if master_key_store is None:
+            if key_path is None:
+                raise ValueError("A key path or master key store is required")
+            master_key_store = FileMasterKeyStore(key_path)
+        self.master_key_store = master_key_store
         self._lock = threading.Lock()
 
+    @property
+    def key_backend(self) -> str:
+        return self.master_key_store.backend_name
+
     def _master_key(self) -> bytes:
-        if not self.key_path.exists():
-            key = AESGCM.generate_key(bit_length=256)
-            self.key_path.write_bytes(key)
-            try:
-                os.chmod(self.key_path, 0o600)
-            except OSError:
-                pass
-            return key
-        key = self.key_path.read_bytes()
+        key = self.master_key_store.get_or_create()
         if len(key) != 32:
             raise RuntimeError("Credential vault master key is invalid")
         return key
@@ -57,10 +63,6 @@ class CredentialVault:
         except OSError:
             pass
         temp.replace(self.vault_path)
-        try:
-            os.chmod(self.vault_path, 0o600)
-        except OSError:
-            pass
 
     def set_secret(self, reference: str, secret: str) -> None:
         if not reference or not secret:

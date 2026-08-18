@@ -1,0 +1,1 @@
+"""MAIL-AGENT desktop launcher."""

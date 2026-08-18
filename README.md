@@ -26,12 +26,19 @@ It produces a typed `MailActionProposal`; only the gateway can evaluate and late
 High-impact actions such as sending, forwarding, and deletion remain human approval-gated in v0.2.
 
 Mailbox passwords are encrypted at rest using AES-256-GCM and are not written to `state.json` or the
-mail SQLite database. The vault master key is kept in a separate permission-restricted local file.
-This protects against accidental database/state disclosure; OS-native keychain wrapping is planned
-as a further hardening step.
+mail SQLite database. The vault master key is protected with Windows DPAPI, macOS Keychain, or Linux Secret Service when
+available, with a permission-restricted local-file fallback.
 
 The agent's private Ed25519 key is generated locally and never sent to the registry. Only the public
 key, fingerprint, owner, and installation metadata are registered remotely.
+
+## Installation for normal users
+
+**Windows:** download `Mail-Agent-Setup.exe`, double-click it, install, and launch MAIL-AGENT from
+the Start menu. No Python, terminal, Git, Docker, or manual port configuration is required.
+
+The desktop launcher starts the local services and opens the onboarding automatically. See
+[`docs/INSTALLATION.md`](docs/INSTALLATION.md) for distribution details.
 
 ## Development
 

@@ -3,38 +3,17 @@
 <head>
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-  <meta name="theme-color" content="#07101b" />
-  <title>MAIL-AGENT · Onboarding</title>
+  <meta name="theme-color" content="#080b12" />
+  <title>MAIL-AGENT</title>
   <link rel="stylesheet" href="/assets/styles.css" />
 </head>
 <body>
-  <main class="shell">
-    <section class="brand-panel">
-      <div class="brand-mark" aria-hidden="true">✉</div>
-      <div>
-        <p class="eyebrow">LOCAL-FIRST EMAIL INTELLIGENCE</p>
-        <h1>MAIL<span>·</span>AGENT</h1>
-        <p class="tagline">Dein persönlicher Agent für genau eine Aufgabe: E-Mail.</p>
-      </div>
-      <div class="trust-list">
-        <div class="trust"><b>⌁</b><div><strong>Private keys stay local</strong><small>Die Agent-Identität wird lokal signiert.</small></div></div>
-        <div class="trust"><b>◇</b><div><strong>Policy before action</strong><small>Das Modell darf niemals direkt senden.</small></div></div>
-        <div class="trust"><b>◉</b><div><strong>Offline capable</strong><small>Ollama kann vollständig lokal arbeiten.</small></div></div>
-      </div>
-      <div class="orb orb-a"></div><div class="orb orb-b"></div>
-    </section>
-
-    <section class="onboarding-panel">
-      <div class="progress-wrap">
-        <div class="step-row"><span id="step-counter">Setup 1 / 7</span><strong id="step-name">Identität</strong></div>
-        <div class="progress"><div id="progress-bar"></div></div>
-      </div>
-      <div class="content">
-        <div id="app"></div>
-        <div id="notice" class="notice hidden"></div>
-      </div>
-    </section>
-  </main>
+  <div id="app-shell">
+    <div class="ambient ambient-a"></div>
+    <div class="ambient ambient-b"></div>
+    <div id="app"></div>
+    <div id="notice" class="toast hidden"></div>
+  </div>
   <script src="/assets/app.js" defer></script>
 </body>
 </html>

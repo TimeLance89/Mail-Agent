@@ -11,7 +11,7 @@ from pydantic import BaseModel, Field
 
 from .database import default_database
 
-app = FastAPI(title="MAIL-AGENT Registry", version="0.2.0")
+app = FastAPI(title="MAIL-AGENT Registry", version="0.2.1")
 database = default_database()
 
 
@@ -30,7 +30,7 @@ class AgentRegistration(BaseModel):
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "service": "mail-agent-registry", "version": "0.2.0"}
+    return {"status": "ok", "service": "mail-agent-registry", "version": "0.2.1"}
 
 
 def _canonical_registration(body: AgentRegistration) -> bytes:

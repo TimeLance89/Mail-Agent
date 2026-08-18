@@ -28,6 +28,8 @@ class StoredMessage:
     sent_at: str | None
     body_text: str
     seen: bool
+    remote_id: str | None = None
+    connector: str = "imap"
 
 
 class MailStore:
@@ -60,6 +62,8 @@ class MailStore:
                     body_text TEXT NOT NULL,
                     seen INTEGER NOT NULL DEFAULT 0,
                     synced_at TEXT NOT NULL,
+                    remote_id TEXT,
+                    connector TEXT NOT NULL DEFAULT 'imap',
                     PRIMARY KEY (mailbox_id, uid)
                 );
                 CREATE INDEX IF NOT EXISTS idx_messages_thread
@@ -71,7 +75,8 @@ class MailStore:
                     mailbox_id TEXT PRIMARY KEY,
                     last_uid INTEGER NOT NULL DEFAULT 0,
                     last_synced_at TEXT,
-                    last_error TEXT
+                    last_error TEXT,
+                    cursor TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS approvals (
@@ -105,8 +110,23 @@ class MailStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_drafts_mailbox
                     ON drafts(mailbox_id, created_at DESC);
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_remote
+                    ON messages(mailbox_id, remote_id) WHERE remote_id IS NOT NULL;
                 """
             )
+            self._ensure_column(conn, "messages", "remote_id", "TEXT")
+            self._ensure_column(conn, "messages", "connector", "TEXT NOT NULL DEFAULT 'imap'")
+            self._ensure_column(conn, "sync_state", "cursor", "TEXT")
+            conn.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_remote "
+                "ON messages(mailbox_id, remote_id) WHERE remote_id IS NOT NULL"
+            )
+
+    @staticmethod
+    def _ensure_column(conn: sqlite3.Connection, table: str, column: str, definition: str) -> None:
+        columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
+        if column not in columns:
+            conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
 
     def upsert_messages(self, messages: list[StoredMessage]) -> int:
         if not messages:
@@ -125,6 +145,8 @@ class MailStore:
                 item.body_text,
                 1 if item.seen else 0,
                 now,
+                item.remote_id,
+                item.connector,
             )
             for item in messages
         ]
@@ -133,8 +155,8 @@ class MailStore:
                 """
                 INSERT INTO messages (
                     mailbox_id, uid, internet_message_id, thread_key, sender,
-                    recipients_json, subject, sent_at, body_text, seen, synced_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    recipients_json, subject, sent_at, body_text, seen, synced_at, remote_id, connector
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(mailbox_id, uid) DO UPDATE SET
                     internet_message_id=excluded.internet_message_id,
                     thread_key=excluded.thread_key,
@@ -144,7 +166,9 @@ class MailStore:
                     sent_at=excluded.sent_at,
                     body_text=excluded.body_text,
                     seen=excluded.seen,
-                    synced_at=excluded.synced_at
+                    synced_at=excluded.synced_at,
+                    remote_id=excluded.remote_id,
+                    connector=excluded.connector
                 """,
                 rows,
             )
@@ -156,7 +180,7 @@ class MailStore:
             rows = conn.execute(
                 """
                 SELECT mailbox_id, uid, internet_message_id, thread_key, sender,
-                       recipients_json, subject, sent_at, body_text, seen, synced_at
+                       recipients_json, subject, sent_at, body_text, seen, synced_at, remote_id, connector
                 FROM messages WHERE mailbox_id=? ORDER BY uid DESC LIMIT ?
                 """,
                 (mailbox_id, limit),
@@ -177,24 +201,32 @@ class MailStore:
             ).fetchone()
         return int(row["last_uid"]) if row else 0
 
-    def record_sync(self, mailbox_id: str, *, last_uid: int, error: str | None = None) -> None:
+    def record_sync(
+        self,
+        mailbox_id: str,
+        *,
+        last_uid: int,
+        error: str | None = None,
+        cursor: str | None = None,
+    ) -> None:
         with self._lock, self._connect() as conn:
             conn.execute(
                 """
-                INSERT INTO sync_state (mailbox_id, last_uid, last_synced_at, last_error)
-                VALUES (?, ?, ?, ?)
+                INSERT INTO sync_state (mailbox_id, last_uid, last_synced_at, last_error, cursor)
+                VALUES (?, ?, ?, ?, ?)
                 ON CONFLICT(mailbox_id) DO UPDATE SET
                     last_uid=excluded.last_uid,
                     last_synced_at=excluded.last_synced_at,
-                    last_error=excluded.last_error
+                    last_error=excluded.last_error,
+                    cursor=COALESCE(excluded.cursor, sync_state.cursor)
                 """,
-                (mailbox_id, last_uid, utc_now(), error),
+                (mailbox_id, last_uid, utc_now(), error, cursor),
             )
 
     def sync_status(self, mailbox_id: str) -> dict[str, Any]:
         with self._lock, self._connect() as conn:
             row = conn.execute(
-                "SELECT mailbox_id, last_uid, last_synced_at, last_error FROM sync_state WHERE mailbox_id=?",
+                "SELECT mailbox_id, last_uid, last_synced_at, last_error, cursor FROM sync_state WHERE mailbox_id=?",
                 (mailbox_id,),
             ).fetchone()
         return dict(row) if row else {
@@ -202,7 +234,27 @@ class MailStore:
             "last_uid": 0,
             "last_synced_at": None,
             "last_error": None,
+            "cursor": None,
         }
+
+    def delete_remote_message(self, mailbox_id: str, remote_id: str) -> bool:
+        with self._lock, self._connect() as conn:
+            cursor = conn.execute(
+                "DELETE FROM messages WHERE mailbox_id=? AND remote_id=?",
+                (mailbox_id, remote_id),
+            )
+            return cursor.rowcount > 0
+
+    def clear_messages(self, mailbox_id: str, *, connector: str | None = None) -> int:
+        with self._lock, self._connect() as conn:
+            if connector:
+                cursor = conn.execute(
+                    "DELETE FROM messages WHERE mailbox_id=? AND connector=?",
+                    (mailbox_id, connector),
+                )
+            else:
+                cursor = conn.execute("DELETE FROM messages WHERE mailbox_id=?", (mailbox_id,))
+            return cursor.rowcount
 
     def enqueue_approval(
         self,

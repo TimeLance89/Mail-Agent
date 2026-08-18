@@ -1,18 +1,20 @@
-const gateway = location.origin;
-const steps = ['Identität', 'Einsatz', 'Postfach', 'KI-Modell', 'Persönlichkeit', 'Autonomie', 'Aktivieren'];
+const apiBase = location.origin;
+const onboardingSteps = ['Identität', 'Einsatz', 'Postfach', 'KI', 'Persönlichkeit', 'Sicherheit'];
 let step = 0;
 let identity = null;
 let probe = null;
 let busy = false;
-let dashboardMode = false;
+let installed = false;
+let activeView = 'overview';
 let dashboard = { mailboxes: [], approvals: [], messages: [], drafts: [] };
+let mailboxConnected = false;
+let mailboxId = null;
 const form = {
   ownerId: '', agentName: 'Nova', usageType: 'private', provider: 'ollama', model: '',
   autonomy: 'assistant', tone: 'friendly', language: 'de', emailSignature: '',
-  emailAddress: '', mailboxUsername: '', mailboxPassword: '', imapHost: '', imapPort: 993, smtpHost: '', smtpPort: 465
+  emailAddress: '', mailboxUsername: '', mailboxPassword: '', imapHost: '', imapPort: 993,
+  smtpHost: '', smtpPort: 465,
 };
-let mailboxConnected = false;
-let mailboxId = null;
 
 const app = document.querySelector('#app');
 const notice = document.querySelector('#notice');
@@ -20,315 +22,119 @@ const notice = document.querySelector('#notice');
 function esc(value = '') {
   return String(value).replace(/[&<>'"]/g, ch => ({'&':'&amp;','<':'&lt;','>':'&gt;',"'":'&#39;','"':'&quot;'}[ch]));
 }
-function showNotice(text, kind='') {
-  notice.textContent = text;
-  notice.className = `notice ${kind}`;
+function icon(name, size = 20) {
+  const paths = {
+    mail:'<path d="M4 6h16v12H4z"/><path d="m4 7 8 6 8-6"/>',
+    home:'<path d="m3 11 9-8 9 8"/><path d="M5 10v10h14V10"/>',
+    shield:'<path d="M12 3 5 6v5c0 5 3 8 7 10 4-2 7-5 7-10V6z"/><path d="m9 12 2 2 4-4"/>',
+    draft:'<path d="M5 4h10l4 4v12H5z"/><path d="M15 4v5h4"/><path d="M8 13h8M8 16h6"/>',
+    inbox:'<path d="M4 5h16v14H4z"/><path d="M4 14h5l2 2h2l2-2h5"/>',
+    sync:'<path d="M20 7h-5V2"/><path d="M20 7a8 8 0 0 0-14-2M4 17h5v5"/><path d="M4 17a8 8 0 0 0 14 2"/>',
+    settings:'<circle cx="12" cy="12" r="3"/><path d="M19 12a7 7 0 0 0-.1-1l2-1.5-2-3.4-2.4 1A7 7 0 0 0 15 6l-.3-2.6h-4L10.5 6A7 7 0 0 0 9 7.1l-2.4-1-2 3.4L6.6 11a7 7 0 0 0 0 2l-2 1.5 2 3.4 2.4-1A7 7 0 0 0 10.5 18l.3 2.6h4L15 18a7 7 0 0 0 1.5-1.1l2.4 1 2-3.4-2-1.5c.1-.3.1-.7.1-1z"/>',
+    spark:'<path d="m12 3 1.5 4.5L18 9l-4.5 1.5L12 15l-1.5-4.5L6 9l4.5-1.5z"/><path d="m19 14 .7 2.3L22 17l-2.3.7L19 20l-.7-2.3L16 17l2.3-.7z"/>',
+    chevron:'<path d="m9 18 6-6-6-6"/>',
+    check:'<path d="m5 12 4 4L19 6"/>',
+    x:'<path d="m6 6 12 12M18 6 6 18"/>',
+    user:'<circle cx="12" cy="8" r="4"/><path d="M4 21c1.5-5 4-7 8-7s6.5 2 8 7"/>',
+    lock:'<rect x="5" y="10" width="14" height="10" rx="2"/><path d="M8 10V7a4 4 0 0 1 8 0v3"/>',
+  };
+  return `<svg class="icon" width="${size}" height="${size}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${paths[name] || paths.spark}</svg>`;
 }
-function clearNotice() { notice.textContent = ''; notice.className = 'notice hidden'; }
+function showNotice(text, kind='success') {
+  notice.textContent = text;
+  notice.className = `toast ${kind}`;
+  clearTimeout(showNotice.timer);
+  showNotice.timer = setTimeout(() => notice.className = 'toast hidden', 3800);
+}
 async function request(path, options = {}) {
-  const response = await fetch(`${gateway}${path}`, options);
-  const data = await response.json();
+  const response = await fetch(`${apiBase}${path}`, options);
+  const data = await response.json().catch(() => ({}));
   if (!response.ok) throw new Error(data.detail || `HTTP ${response.status}`);
   return data;
 }
-async function get(path) { return request(path); }
-async function post(path, body) {
-  return request(path, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
-}
-function setStep(next) { step = Math.max(0, Math.min(steps.length - 1, next)); clearNotice(); render(); }
-function updateHeader() {
-  const counter = document.querySelector('#step-counter');
-  const name = document.querySelector('#step-name');
-  const bar = document.querySelector('#progress-bar');
-  if (dashboardMode) {
-    counter.textContent = 'MAIL-AGENT v0.2';
-    name.textContent = 'Control Center';
-    bar.style.width = '100%';
-    return;
-  }
-  counter.textContent = `Setup ${step + 1} / ${steps.length}`;
-  name.textContent = steps[step];
-  bar.style.width = `${((step + 1) / steps.length) * 100}%`;
-}
-function stepShell(icon, title, subtitle, body) {
-  return `<div class="step"><div class="step-icon">${icon}</div><h2>${title}</h2><p class="subtitle">${subtitle}</p><div class="form">${body}</div></div>`;
-}
-function info(text, tone='') { return `<div class="info ${tone}"><span>◇</span><span>${text}</span></div>`; }
-function nav(back, next, disabled=false) { return `<div class="nav"><button class="ghost" data-go="${back}">← Zurück</button><button class="primary" data-go="${next}" ${disabled?'disabled':''}>Weiter →</button></div>`; }
-function choice(value, title, text, selected, group, icon='') {
-  return `<button class="choice ${selected?'active':''}" data-choice-group="${group}" data-choice="${value}">${icon ? `<span class="choice-icon">${icon}</span>`:''}<span><strong>${title}</strong><small>${text}</small></span>${selected?'<i class="check">✓</i>':''}</button>`;
-}
-function summary(label, value) { return `<div class="summary-row"><span>${esc(label)}</span><strong>${esc(value)}</strong></div>`; }
+const get = path => request(path);
+const post = (path, body) => request(path, { method:'POST', headers:{'Content-Type':'application/json'}, body:JSON.stringify(body) });
 
-function render() {
-  updateHeader();
-  if (dashboardMode) {
-    renderDashboard();
-    return;
-  }
-  if (step === 0) {
-    app.innerHTML = stepShell('⌁', 'Gib deinem Agenten eine Identität', 'Jede Installation erhält eine eindeutige kryptografische Signatur und wird einem Owner zugeordnet.', `
-      <label>Owner-ID oder Accountname<input id="owner" value="${esc(form.ownerId)}" placeholder="z. B. steffen"></label>
-      <label>Name des Agenten<input id="agent-name" value="${esc(form.agentName)}"></label>
-      ${info('Beim Fortfahren erzeugt MAIL-AGENT lokal ein Ed25519-Schlüsselpaar. Nur der öffentliche Schlüssel wird registriert.')}
-      <button class="primary" id="identity-next" ${!form.ownerId || !form.agentName ? 'disabled':''}>Weiter →</button>
-    `);
-  } else if (step === 1) {
-    app.innerHTML = stepShell('◎', 'Wofür arbeitet dein Agent?', 'Der Einsatzbereich bestimmt Sicherheits-Defaults und Tonalität.', `
-      <div class="cards two">
-        ${choice('private','Privat','Persönliche Kommunikation und Alltag.',form.usageType==='private','usage','⌂')}
-        ${choice('work','Arbeit','Konservativere Regeln für berufliche Mail.',form.usageType==='work','usage','▣')}
-        ${choice('business','Business','Geschäftliche Konten mit strengen Freigaben.',form.usageType==='business','usage','◇')}
-        ${choice('custom','Individuell','Eigene Regeln detailliert konfigurieren.',form.usageType==='custom','usage','✦')}
-      </div>
-      ${identity ? info(`Agent <code>${esc(identity.agent_id.slice(0,18))}…</code> registriert · Fingerprint <code>${esc(identity.fingerprint.slice(0,14))}…</code>`, 'good') : ''}
-      <div class="nav"><button class="ghost" data-go="0">← Zurück</button><button class="primary" id="create-identity" ${busy?'disabled':''}>${busy?'Registriere…':'Identität registrieren →'}</button></div>
-    `);
-  } else if (step === 2) {
-    app.innerHTML = stepShell('✉', 'Verbinde dein erstes Postfach', 'MAIL-AGENT prüft IMAP und SMTP und legt das Passwort danach verschlüsselt im lokalen Credential Vault ab.', `
-      <div class="field-grid">
-        <label>E-Mail-Adresse<input id="email-address" value="${esc(form.emailAddress)}" placeholder="name@example.com"></label>
-        <label>Benutzername<input id="mailbox-username" value="${esc(form.mailboxUsername)}" placeholder="meist die E-Mail-Adresse"></label>
-        <label>IMAP-Server<input id="imap-host" value="${esc(form.imapHost)}" placeholder="imap.example.com"></label>
-        <label>IMAP-Port<input id="imap-port" type="number" value="${form.imapPort}"></label>
-        <label>SMTP-Server<input id="smtp-host" value="${esc(form.smtpHost)}" placeholder="smtp.example.com"></label>
-        <label>SMTP-Port<input id="smtp-port" type="number" value="${form.smtpPort}"></label>
-      </div>
-      <label>Passwort / App-Passwort<input id="mailbox-password" type="password" value="${esc(form.mailboxPassword)}" autocomplete="new-password"></label>
-      ${info('v0.2: Secrets werden mit AES-256-GCM verschlüsselt. Weder state.json noch die lokale Mail-Datenbank enthalten das Passwort.')}
-      <button class="secondary" id="probe-mailbox" ${busy?'disabled':''}>${busy?'Prüfe…':'IMAP + SMTP testen & sicher speichern'}</button>
-      ${mailboxConnected ? info(`Postfach ${esc(form.emailAddress)} verbunden · Credential Vault aktiv.`, 'good') : ''}
-      ${nav(1,3,!mailboxConnected)}
-    `);
-  } else if (step === 3) {
-    const models = probe?.models?.length ? `<label>Modell<select id="model-select">${probe.models.map(m=>`<option ${m===form.model?'selected':''}>${esc(m)}</option>`).join('')}</select></label>` : '';
-    app.innerHTML = stepShell('◈', 'Wähle das Gehirn', 'Provider sind austauschbar. Mail-Zugang und Aktionsrechte bleiben immer beim Gateway.', `
-      <div class="cards two">
-        ${choice('ollama','Ollama','Lokale Modelle. Mail-Inhalte bleiben auf deinem Gerät.',form.provider==='ollama','provider','◉')}
-        ${choice('codex','ChatGPT / Codex','Verwendet den lokal angemeldeten Codex-Client statt eines eingetragenen API-Keys.',form.provider==='codex','provider','☁')}
-      </div>
-      <button class="secondary" id="probe-provider" ${busy?'disabled':''}>${busy?'Prüfe…':'Verbindung prüfen'}</button>
-      ${probe ? info(esc(probe.detail), probe.available?'good':'warn') : ''}
-      ${models}
-      ${nav(2,4,!probe?.available)}
-    `);
-  } else if (step === 4) {
-    app.innerHTML = stepShell('✦', 'Wie soll dein Agent schreiben?', 'Die Persönlichkeit wird pro Agent gespeichert und später pro Mailkonto überschreibbar.', `
-      <div class="field-grid">
-        <label>Sprache<select id="language"><option value="de" ${form.language==='de'?'selected':''}>Deutsch</option><option value="en" ${form.language==='en'?'selected':''}>English</option></select></label>
-        <label>Grundton<select id="tone"><option value="friendly" ${form.tone==='friendly'?'selected':''}>Freundlich</option><option value="professional" ${form.tone==='professional'?'selected':''}>Professionell</option><option value="direct" ${form.tone==='direct'?'selected':''}>Direkt</option><option value="warm" ${form.tone==='warm'?'selected':''}>Warm</option></select></label>
-      </div>
-      <label>E-Mail-Signatur<textarea id="email-signature" rows="5" placeholder="Viele Grüße\nSteffen">${esc(form.emailSignature)}</textarea></label>
-      ${nav(3,5)}
-    `);
-  } else if (step === 5) {
-    app.innerHTML = stepShell('◇', 'Wie selbstständig darf er sein?', 'Hohe Auswirkungen bleiben in v0.2 immer freigabepflichtig – selbst im autonomen Modus.', `
-      <div class="stack">
-        ${choice('observer','Observer','Nur lesen, analysieren und priorisieren.',form.autonomy==='observer','autonomy')}
-        ${choice('assistant','Assistant','Zusätzlich Antwortentwürfe erstellen.',form.autonomy==='assistant','autonomy')}
-        ${choice('copilot','Copilot','Darf sortieren und archivieren; Senden braucht Freigabe.',form.autonomy==='copilot','autonomy')}
-        ${choice('autonomous','Autonomous','Automatisiert erlaubte Aktionen nach festen Regeln.',form.autonomy==='autonomous','autonomy')}
-      </div>
-      ${nav(4,6)}
-    `);
-  } else {
-    app.innerHTML = stepShell('✓', 'Bereit für MAIL-AGENT', 'Prüfe die Kernkonfiguration. Danach übernimmt der lokale Sync-Worker dein Postfach.', `
-      <div class="summary">
-        ${summary('Agent',form.agentName)}${summary('Einsatz',form.usageType)}${summary('Modell',`${form.provider} / ${form.model || 'default'}`)}${summary('Autonomie',form.autonomy)}${summary('Postfach',form.emailAddress || 'Fehlt')}${summary('Credential Vault',mailboxConnected?'Aktiv':'Fehlt')}${summary('E-Mail-Signatur',form.emailSignature?'Konfiguriert':'Noch leer')}${summary('Agent-Identität',identity?'Registriert':'Fehlt')}
-      </div>
-      ${info('Senden, Weiterleiten und Löschen landen in der Approval Queue und werden nicht durch das Modell selbst freigegeben.')}
-      <div class="nav"><button class="ghost" data-go="5">← Zurück</button><button class="primary" id="finish" ${busy||!identity?'disabled':''}>${busy?'Aktiviere…':'Agent aktivieren ✓'}</button></div>
-    `);
-  }
-  bind();
+function brand(compact=false) {
+  return `<div class="brand ${compact?'compact':''}"><div class="brand-logo">${icon('mail',22)}</div><div><strong>MAIL<span>·</span>AGENT</strong>${compact?'':'<small>Private email intelligence</small>'}</div></div>`;
 }
+function stepper() {
+  return `<div class="setup-stepper">${onboardingSteps.map((label, i) => `<div class="setup-dot ${i < step ? 'done' : ''} ${i === step ? 'active' : ''}"><span>${i < step ? icon('check',13) : i+1}</span><small>${label}</small></div>`).join('')}</div>`;
+}
+function setupLayout(content) {
+  return `<main class="setup-page"><section class="setup-aside">${brand()}<div class="setup-aside-copy"><span class="kicker">SETUP IN WENIGEN MINUTEN</span><h1>Dein Postfach.<br><em>Dein Agent.</em></h1><p>MAIL-AGENT arbeitet lokal, kontrolliert und ausschließlich für E-Mail.</p></div><div class="trust-pill">${icon('shield',18)}<span><b>Local-first</b><small>Schlüssel und Mail-Zugang bleiben bei dir.</small></span></div></section><section class="setup-main"><div class="setup-top"><span>Schritt ${step+1} von ${onboardingSteps.length}</span><b>${onboardingSteps[step]}</b></div>${stepper()}<div class="setup-card">${content}</div><div class="setup-foot">MAIL-AGENT v0.2.1 · Lokales Gateway</div></section></main>`;
+}
+function field(label, id, value='', type='text', placeholder='') {
+  return `<label class="field"><span>${label}</span><input id="${id}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}"></label>`;
+}
+function selectField(label,id,options,value) {
+  return `<label class="field"><span>${label}</span><select id="${id}">${options.map(([v,l])=>`<option value="${v}" ${v===value?'selected':''}>${l}</option>`).join('')}</select></label>`;
+}
+function choice(group,value,title,text,selected,ico) {
+  return `<button class="select-card ${selected?'selected':''}" data-choice-group="${group}" data-choice="${value}"><span class="select-icon">${icon(ico||'spark',20)}</span><span class="select-copy"><b>${title}</b><small>${text}</small></span><span class="select-check">${selected?icon('check',16):''}</span></button>`;
+}
+function actions(back, nextLabel='Weiter', nextId='next', disabled=false) {
+  return `<div class="setup-actions">${back === null ? '<span></span>' : `<button class="btn text" data-back="${back}">Zurück</button>`}<button class="btn primary" id="${nextId}" ${disabled?'disabled':''}>${nextLabel}${icon('chevron',17)}</button></div>`;
+}
+function saveVisible() {
+  const map = [['owner','ownerId'],['agent-name','agentName'],['email-address','emailAddress'],['mailbox-username','mailboxUsername'],['mailbox-password','mailboxPassword'],['imap-host','imapHost'],['smtp-host','smtpHost'],['email-signature','emailSignature']];
+  map.forEach(([id,key]) => { const el=document.getElementById(id); if(el) form[key]=el.value; });
+  const nmap=[['imap-port','imapPort'],['smtp-port','smtpPort']]; nmap.forEach(([id,key])=>{const el=document.getElementById(id); if(el) form[key]=Number(el.value)||form[key];});
+  [['language','language'],['tone','tone'],['model-select','model']].forEach(([id,key])=>{const el=document.getElementById(id); if(el) form[key]=el.value;});
+}
+function go(next) { saveVisible(); step=Math.max(0,Math.min(onboardingSteps.length-1,next)); render(); }
 
-function renderDashboard() {
-  const mailbox = dashboard.mailboxes[0];
-  const sync = mailbox?.sync || {};
-  const approvals = dashboard.approvals || [];
-  const messages = dashboard.messages || [];
-  const drafts = dashboard.drafts || [];
-  app.innerHTML = stepShell('◉', 'Control Center', 'Lokaler Mail-Sync, Inbox und menschliche Freigaben an einem Ort.', `
-    <div class="metric-grid">
-      <div class="metric"><span>Postfach</span><strong>${mailbox ? esc(mailbox.email_address) : 'Nicht verbunden'}</strong><small>${mailbox?.credential_available ? 'Vault ✓' : 'Credential fehlt'}</small></div>
-      <div class="metric"><span>Letzter UID</span><strong>${esc(sync.last_uid ?? 0)}</strong><small>${sync.last_synced_at ? esc(new Date(sync.last_synced_at).toLocaleString()) : 'Noch kein Sync'}</small></div>
-      <div class="metric"><span>Freigaben</span><strong>${approvals.length}</strong><small>offen</small></div>
-      <div class="metric"><span>Entwürfe</span><strong>${drafts.length}</strong><small>lokal gespeichert</small></div>
-    </div>
-    ${sync.last_error ? info(`Letzter Sync-Fehler: ${esc(sync.last_error)}`, 'warn') : info('Der Sync liest per IMAP UID + BODY.PEEK[] und verändert den Gelesen-Status nicht.', 'good')}
-    <div class="toolbar"><button class="primary" id="sync-now" ${busy||!mailbox?'disabled':''}>${busy?'Synchronisiere…':'Jetzt synchronisieren'}</button><button class="secondary" id="refresh-dashboard">Aktualisieren</button></div>
-    <section class="dashboard-section"><div class="section-head"><h3>Approval Queue</h3><span>${approvals.length} offen</span></div>
-      ${approvals.length ? approvals.map(approvalCard).join('') : '<div class="empty">Keine offenen Freigaben.</div>'}
-    </section>
-    <section class="dashboard-section"><div class="section-head"><h3>Entwürfe</h3><span>${drafts.length} gespeichert</span></div>
-      ${drafts.length ? drafts.slice(0,5).map(draftCard).join('') : '<div class="empty">Noch keine Agent-Entwürfe.</div>'}
-    </section>
-    <section class="dashboard-section"><div class="section-head"><h3>Lokale Inbox</h3><span>${messages.length} angezeigt</span></div>
-      ${messages.length ? messages.map(messageCard).join('') : '<div class="empty">Noch keine lokal synchronisierten Nachrichten.</div>'}
-    </section>
-  `);
-  bindDashboard();
+function renderSetup() {
+  let body='';
+  if (step===0) body = `<div class="card-heading"><span class="card-icon">${icon('user',22)}</span><div><h2>Wer bekommt diesen Agenten?</h2><p>Wir erzeugen eine eindeutige, kryptografisch signierte Identität für diese Installation.</p></div></div><div class="form-grid one">${field('Owner / Accountname','owner',form.ownerId,'text','z. B. steffen')}${field('Name des Agenten','agent-name',form.agentName,'text','Nova')}</div><div class="security-note">${icon('lock',18)}<span>Der private Ed25519-Schlüssel verlässt dieses Gerät niemals.</span></div>${actions(null,'Weiter','next',!form.ownerId||!form.agentName)}`;
+  if (step===1) body = `<div class="card-heading"><span class="card-icon">${icon('spark',22)}</span><div><h2>Wofür soll er arbeiten?</h2><p>Damit setzen wir passende Sicherheits- und Stil-Defaults.</p></div></div><div class="selection-grid">${choice('usage','private','Privat','Alltag, Freunde, Familie und persönliche Kommunikation.',form.usageType==='private','home')}${choice('usage','work','Arbeit','Konservativere Regeln und professioneller Standard.',form.usageType==='work','draft')}${choice('usage','business','Business','Strenge Freigaben für geschäftliche Kommunikation.',form.usageType==='business','shield')}${choice('usage','custom','Individuell','Eigene Regeln und Verhalten frei konfigurieren.',form.usageType==='custom','settings')}</div>${identity?`<div class="success-line">${icon('check',16)} Identität registriert · ${esc(identity.fingerprint.slice(0,12))}…</div>`:''}${actions(0,'Identität anlegen','identity-create',busy)}`;
+  if (step===2) body = `<div class="card-heading"><span class="card-icon">${icon('inbox',22)}</span><div><h2>Postfach verbinden</h2><p>Einmal anmelden, danach synchronisiert MAIL-AGENT selbstständig.</p></div></div><div class="provider-strip"><div class="provider-chip muted">Gmail OAuth <span>kommt direkt als Nächstes</span></div><div class="provider-chip muted">Microsoft 365 <span>kommt direkt als Nächstes</span></div></div><div class="separator"><span>oder IMAP / SMTP</span></div><div class="form-grid two">${field('E-Mail-Adresse','email-address',form.emailAddress,'email','name@example.com')}${field('Benutzername','mailbox-username',form.mailboxUsername,'text','meist E-Mail-Adresse')}${field('IMAP-Server','imap-host',form.imapHost,'text','imap.example.com')}${field('IMAP-Port','imap-port',form.imapPort,'number')}${field('SMTP-Server','smtp-host',form.smtpHost,'text','smtp.example.com')}${field('SMTP-Port','smtp-port',form.smtpPort,'number')}</div>${field('Passwort / App-Passwort','mailbox-password',form.mailboxPassword,'password','••••••••••••')}<div class="security-note">${icon('lock',18)}<span>Das Secret wird AES-256-GCM verschlüsselt und nie in der Mail-Datenbank gespeichert.</span></div><div class="setup-actions"><button class="btn text" data-back="1">Zurück</button><div class="inline-actions"><button class="btn secondary" id="mailbox-test" ${busy?'disabled':''}>Verbindung testen</button><button class="btn primary" id="next" ${!mailboxConnected?'disabled':''}>Weiter${icon('chevron',17)}</button></div></div>`;
+  if (step===3) { const models=probe?.models||[]; body=`<div class="card-heading"><span class="card-icon">${icon('spark',22)}</span><div><h2>Welches Modell soll denken?</h2><p>Du kannst lokal mit Ollama oder über deinen angemeldeten Codex-Client arbeiten.</p></div></div><div class="selection-grid two">${choice('provider','ollama','Ollama','Komplett lokal. Ideal für maximale Privatsphäre.',form.provider==='ollama','home')}${choice('provider','codex','ChatGPT / Codex','Nutzt den lokal angemeldeten Codex-Client.',form.provider==='codex','spark')}</div><div class="inline-actions left"><button class="btn secondary" id="provider-test" ${busy?'disabled':''}>Provider prüfen</button>${probe?`<span class="probe ${probe.available?'ok':'bad'}">${probe.available?'Bereit':'Nicht verfügbar'}</span>`:''}</div>${models.length?selectField('Modell','model-select',models.map(m=>[m,m]),form.model):''}${actions(2,'Weiter','next',!probe?.available)}`; }
+  if (step===4) body = `<div class="card-heading"><span class="card-icon">${icon('user',22)}</span><div><h2>Wie soll dein Agent klingen?</h2><p>Diese Persönlichkeit prägt jeden Entwurf, ohne Sicherheitsregeln zu verändern.</p></div></div><div class="form-grid two">${selectField('Sprache','language',[['de','Deutsch'],['en','English']],form.language)}${selectField('Ton','tone',[['friendly','Freundlich'],['professional','Professionell'],['direct','Direkt'],['warm','Warm']],form.tone)}</div><label class="field"><span>E-Mail-Signatur</span><textarea id="email-signature" rows="5" placeholder="Viele Grüße\nSteffen">${esc(form.emailSignature)}</textarea></label>${actions(3)}`;
+  if (step===5) body = `<div class="card-heading"><span class="card-icon">${icon('shield',22)}</span><div><h2>Wie selbstständig darf er sein?</h2><p>Du behältst die Kontrolle. Kritische Aktionen bleiben auch im autonomen Modus freigabepflichtig.</p></div></div><div class="selection-list">${choice('autonomy','observer','Observer','Liest und analysiert nur.',form.autonomy==='observer','inbox')}${choice('autonomy','assistant','Assistant','Erstellt zusätzlich sichere Entwürfe.',form.autonomy==='assistant','draft')}${choice('autonomy','copilot','Copilot','Sortiert und archiviert nach Regeln.',form.autonomy==='copilot','sync')}${choice('autonomy','autonomous','Autonomous','Führt erlaubte Low-Risk-Aktionen selbst aus.',form.autonomy==='autonomous','spark')}</div><div class="final-summary"><div><span>Agent</span><b>${esc(form.agentName)}</b></div><div><span>Postfach</span><b>${esc(form.emailAddress)}</b></div><div><span>Modell</span><b>${esc(form.provider)} · ${esc(form.model||'default')}</b></div><div><span>Versand</span><b>Freigabe erforderlich</b></div></div>${actions(4,'MAIL-AGENT aktivieren','finish',busy)}`;
+  app.innerHTML=setupLayout(body); bindSetup();
 }
+function bindSetup() {
+  document.querySelectorAll('[data-back]').forEach(el=>el.onclick=()=>go(Number(el.dataset.back)));
+  document.querySelectorAll('[data-choice-group]').forEach(el=>el.onclick=()=>{const g=el.dataset.choiceGroup,v=el.dataset.choice;if(g==='usage')form.usageType=v;if(g==='provider'){form.provider=v;form.model=v==='codex'?'default':'';probe=null;}if(g==='autonomy')form.autonomy=v;render();});
+  document.getElementById('next')?.addEventListener('click',()=>go(step+1));
+  ['owner','agent-name'].forEach(id=>document.getElementById(id)?.addEventListener('input',()=>{saveVisible();render();}));
+  document.getElementById('identity-create')?.addEventListener('click',createIdentity);
+  document.getElementById('mailbox-test')?.addEventListener('click',probeMailbox);
+  document.getElementById('provider-test')?.addEventListener('click',probeProvider);
+  document.getElementById('finish')?.addEventListener('click',finishOnboarding);
+}
+async function createIdentity(){saveVisible();busy=true;render();try{identity=await post('/v1/onboarding/identity',{owner_id:form.ownerId,agent_name:form.agentName,usage_type:form.usageType});step=2;}catch(e){showNotice(e.message,'error')}finally{busy=false;render()}}
+async function probeMailbox(){saveVisible();busy=true;render();try{const r=await post('/v1/mailboxes/probe',{email_address:form.emailAddress,username:form.mailboxUsername,password:form.mailboxPassword,imap_host:form.imapHost,imap_port:form.imapPort,smtp_host:form.smtpHost,smtp_port:form.smtpPort});mailboxConnected=true;mailboxId=r.mailbox_id;form.mailboxPassword='';showNotice('Postfach sicher verbunden.')}catch(e){mailboxConnected=false;showNotice(e.message,'error')}finally{busy=false;render()}}
+async function probeProvider(){busy=true;render();try{probe=await post('/v1/providers/probe',{provider:form.provider});if(probe.models?.length&&!form.model)form.model=probe.models[0];if(!probe.available)showNotice(probe.detail,'error')}catch(e){showNotice(e.message,'error')}finally{busy=false;render()}}
+async function finishOnboarding(){saveVisible();busy=true;render();try{await post('/v1/onboarding/complete',{profile:{owner_id:form.ownerId,agent_name:form.agentName,usage_type:form.usageType,autonomy_mode:form.autonomy,language:form.language,tone:form.tone,response_length:'medium',use_humor:false,salutation_style:'adaptive',email_signature:form.emailSignature},provider:form.provider,model:form.model||'default'});installed=true;await loadDashboard(true);showNotice('MAIL-AGENT ist bereit.')}catch(e){showNotice(e.message,'error')}finally{busy=false;render()}}
 
-function approvalCard(item) {
-  const p = item.proposal || {};
-  return `<div class="approval-card"><div><strong>${esc(item.action)}</strong><small>${esc(p.subject || p.recipient || item.message_id || 'Mail-Aktion')}</small><p>${esc(p.reason || item.policy?.reason || '')}</p></div><div class="approval-actions"><button class="secondary" data-reject="${esc(item.approval_id)}">Ablehnen</button><button class="primary" data-approve="${esc(item.approval_id)}">Freigeben</button></div></div>`;
+function navItem(view,label,ico,badge='') { return `<button class="nav-item ${activeView===view?'active':''}" data-view="${view}">${icon(ico,19)}<span>${label}</span>${badge?`<b>${badge}</b>`:''}</button>`; }
+function dashboardLayout(content) {
+  const agentName=form.agentName||identity?.agent_name||'MAIL-AGENT';
+  return `<main class="dashboard"><aside class="sidebar">${brand(true)}<nav>${navItem('overview','Übersicht','home')}${navItem('inbox','Inbox','inbox',dashboard.messages.length||'')}${navItem('approvals','Freigaben','shield',dashboard.approvals.length||'')}${navItem('drafts','Entwürfe','draft',dashboard.drafts.length||'')}${navItem('settings','Einstellungen','settings')}</nav><div class="sidebar-bottom"><div class="agent-mini"><span class="avatar">${esc(agentName.slice(0,1).toUpperCase())}</span><span><b>${esc(agentName)}</b><small><i></i> Aktiv</small></span></div></div></aside><section class="workspace"><header class="topbar"><div><span class="workspace-kicker">MAIL-AGENT</span><h1>${viewTitle()}</h1></div><div class="top-actions"><button class="btn secondary compact" id="sync-now">${icon('sync',16)}Synchronisieren</button><span class="status-pill"><i></i> Gateway online</span></div></header><div class="workspace-body">${content}</div></section></main>`;
 }
-function draftCard(item) {
-  const preview = String(item.body || '').replace(/\s+/g, ' ').slice(0, 180);
-  return `<article class="mail-card"><div class="mail-meta"><strong>${esc(item.recipient || 'Empfänger offen')}</strong><span>${esc(item.status)}</span></div><h4>${esc(item.subject || '(ohne Betreff)')}</h4><p>${esc(preview)}${(item.body||'').length>180?'…':''}</p></article>`;
-}
-function messageCard(item) {
-  const preview = String(item.body_text || '').replace(/\s+/g, ' ').slice(0, 180);
-  return `<article class="mail-card"><div class="mail-meta"><strong>${esc(item.sender || 'Unbekannt')}</strong><span>UID ${esc(item.uid)}</span></div><h4>${esc(item.subject || '(ohne Betreff)')}</h4><p>${esc(preview)}${(item.body_text||'').length>180?'…':''}</p></article>`;
-}
+function viewTitle(){return ({overview:'Übersicht',inbox:'Inbox',approvals:'Freigaben',drafts:'Entwürfe',settings:'Einstellungen'})[activeView]||'Übersicht';}
+function metric(label,value,sub,ico){return `<div class="stat-card"><div class="stat-top"><span>${label}</span><span class="stat-icon">${icon(ico,18)}</span></div><strong>${esc(value)}</strong><small>${esc(sub)}</small></div>`;}
 
-function bind() {
-  document.querySelectorAll('[data-go]').forEach(el => el.addEventListener('click', () => {
-    persistVisibleFields(); setStep(Number(el.dataset.go));
-  }));
-  document.querySelectorAll('[data-choice-group]').forEach(el => el.addEventListener('click', () => {
-    const group = el.dataset.choiceGroup, value = el.dataset.choice;
-    if (group === 'usage') form.usageType = value;
-    if (group === 'provider') { form.provider = value; form.model = value === 'codex' ? 'default' : ''; probe = null; }
-    if (group === 'autonomy') form.autonomy = value;
-    render();
-  }));
-  document.querySelector('#owner')?.addEventListener('input', e => { form.ownerId = e.target.value; const b=document.querySelector('#identity-next'); if(b)b.disabled = !form.ownerId || !form.agentName; });
-  document.querySelector('#agent-name')?.addEventListener('input', e => { form.agentName = e.target.value; const b=document.querySelector('#identity-next'); if(b)b.disabled = !form.ownerId || !form.agentName; });
-  document.querySelector('#identity-next')?.addEventListener('click', () => { persistVisibleFields(); setStep(1); });
-  document.querySelector('#model-select')?.addEventListener('change', e => form.model = e.target.value);
-  document.querySelector('#create-identity')?.addEventListener('click', createIdentity);
-  document.querySelector('#probe-mailbox')?.addEventListener('click', probeMailbox);
-  document.querySelector('#probe-provider')?.addEventListener('click', probeProvider);
-  document.querySelector('#finish')?.addEventListener('click', finish);
+function emptyState(ico, title, text) { return `<div class="empty-state large">${icon(ico,30)}<b>${esc(title)}</b><span>${esc(text)}</span></div>`; }
+function renderDashboard(){
+  const mailbox=dashboard.mailboxes[0]; const sync=mailbox?.sync||{};
+  let content='';
+  if(activeView==='overview') content=`<section class="hero-card"><div><span class="hero-kicker">DEIN AGENT IST BEREIT</span><h2>${esc(form.agentName||'MAIL-AGENT')} hält dein Postfach im Blick.</h2><p>Neue Nachrichten werden lokal synchronisiert, analysiert und nur innerhalb deiner Regeln bearbeitet.</p><div class="hero-actions"><button class="btn primary" data-view="inbox">Inbox öffnen${icon('chevron',16)}</button><button class="btn secondary" data-view="approvals">Freigaben prüfen</button></div></div><div class="hero-orb">${icon('spark',38)}</div></section><div class="stats-grid">${metric('Postfach',mailbox?.email_address||'Nicht verbunden',mailbox?.credential_available?'Vault geschützt':'Credential fehlt','mail')}${metric('Inbox',dashboard.messages.length,'lokal geladene Nachrichten','inbox')}${metric('Freigaben',dashboard.approvals.length,'warten auf deine Entscheidung','shield')}${metric('Entwürfe',dashboard.drafts.length,'vom Agenten vorbereitet','draft')}</div><section class="panel"><div class="panel-head"><div><span>LETZTE NACHRICHTEN</span><h3>Inbox</h3></div><button class="link-btn" data-view="inbox">Alle anzeigen →</button></div>${dashboard.messages.length?dashboard.messages.slice(0,5).map(mailRow).join(''):'<div class="empty-state">Noch keine Nachrichten synchronisiert.</div>'}</section>`;
+  if(activeView==='inbox') content=`<section class="panel full"><div class="panel-head"><div><span>LOKAL SYNCHRONISIERT</span><h3>${esc(mailbox?.email_address||'Inbox')}</h3></div><span class="muted">${sync.last_synced_at?`Zuletzt ${esc(new Date(sync.last_synced_at).toLocaleString())}`:'Noch kein Sync'}</span></div>${dashboard.messages.length?dashboard.messages.map(mailRow).join(''):emptyState('inbox','Deine Inbox ist noch leer','Starte die erste Synchronisierung oben rechts.')}</section>`;
+  if(activeView==='approvals') content=`<section class="panel full"><div class="panel-head"><div><span>HUMAN-IN-THE-LOOP</span><h3>Freigabe-Queue</h3></div><span class="badge">${dashboard.approvals.length} offen</span></div>${dashboard.approvals.length?dashboard.approvals.map(approvalCard).join(''):emptyState('shield','Alles erledigt','Es gibt aktuell keine offenen Aktionen.')}</section>`;
+  if(activeView==='drafts') content=`<section class="panel full"><div class="panel-head"><div><span>VORBEREITET VON ${esc((form.agentName||'Agent').toUpperCase())}</span><h3>Entwürfe</h3></div><span class="badge">${dashboard.drafts.length}</span></div>${dashboard.drafts.length?dashboard.drafts.map(draftCard).join(''):emptyState('draft','Noch keine Entwürfe','Sobald dein Agent Antworten vorbereitet, erscheinen sie hier.')}</section>`;
+  if(activeView==='settings') content=`<div class="settings-grid"><section class="panel"><div class="panel-head"><div><span>AGENT</span><h3>Persönlichkeit</h3></div></div><div class="setting-row"><span>Name</span><b>${esc(form.agentName)}</b></div><div class="setting-row"><span>Einsatz</span><b>${esc(form.usageType)}</b></div><div class="setting-row"><span>Ton</span><b>${esc(form.tone)}</b></div><div class="setting-row"><span>Autonomie</span><b>${esc(form.autonomy)}</b></div></section><section class="panel"><div class="panel-head"><div><span>SICHERHEIT</span><h3>Lokale Vertrauensbasis</h3></div></div><div class="security-block">${icon('lock',22)}<div><b>Credential Vault aktiv</b><p>Mailbox-Secrets und Agent-Schlüssel bleiben lokal geschützt.</p></div></div><div class="security-block">${icon('shield',22)}<div><b>Freigaben erzwungen</b><p>Senden, Löschen und Weiterleiten können nicht vom Modell selbst freigegeben werden.</p></div></div></section></div>`;
+  app.innerHTML=dashboardLayout(content); bindDashboard();
 }
-function bindDashboard() {
-  document.querySelector('#refresh-dashboard')?.addEventListener('click', loadDashboard);
-  document.querySelector('#sync-now')?.addEventListener('click', syncNow);
-  document.querySelectorAll('[data-approve]').forEach(el => el.addEventListener('click', () => decideApproval(el.dataset.approve, 'approve')));
-  document.querySelectorAll('[data-reject]').forEach(el => el.addEventListener('click', () => decideApproval(el.dataset.reject, 'reject')));
-}
-function persistVisibleFields() {
-  const language = document.querySelector('#language'); if (language) form.language = language.value;
-  const tone = document.querySelector('#tone'); if (tone) form.tone = tone.value;
-  const signature = document.querySelector('#email-signature'); if (signature) form.emailSignature = signature.value;
-  const model = document.querySelector('#model-select'); if (model) form.model = model.value;
-  const fields = [['#email-address','emailAddress'],['#mailbox-username','mailboxUsername'],['#mailbox-password','mailboxPassword'],['#imap-host','imapHost'],['#smtp-host','smtpHost']];
-  fields.forEach(([selector,key]) => { const el=document.querySelector(selector); if(el) form[key]=el.value; });
-  const imapPort=document.querySelector('#imap-port'); if(imapPort) form.imapPort=Number(imapPort.value)||993;
-  const smtpPort=document.querySelector('#smtp-port'); if(smtpPort) form.smtpPort=Number(smtpPort.value)||465;
-}
-async function createIdentity() {
-  persistVisibleFields(); busy = true; clearNotice(); render();
-  try {
-    identity = await post('/v1/onboarding/identity',{owner_id:form.ownerId,agent_name:form.agentName,usage_type:form.usageType});
-    setStep(2);
-  } catch (err) { showNotice(err.message,'error'); }
-  finally { busy = false; render(); }
-}
-async function probeMailbox() {
-  persistVisibleFields(); busy = true; mailboxConnected = false; clearNotice(); render();
-  try {
-    const result = await post('/v1/mailboxes/probe',{email_address:form.emailAddress,username:form.mailboxUsername,password:form.mailboxPassword,imap_host:form.imapHost,imap_port:form.imapPort,smtp_host:form.smtpHost,smtp_port:form.smtpPort});
-    mailboxConnected = true;
-    mailboxId = result.mailbox_id;
-    form.mailboxPassword = '';
-  } catch (err) { showNotice(err.message,'error'); }
-  finally { busy = false; render(); }
-}
-async function probeProvider() {
-  busy = true; clearNotice(); probe = null; render();
-  try {
-    probe = await post('/v1/providers/probe',{provider:form.provider});
-    if (probe.models?.length && !form.model) form.model = probe.models[0];
-  } catch (err) { showNotice(err.message,'error'); }
-  finally { busy = false; render(); }
-}
-async function finish() {
-  persistVisibleFields(); busy = true; clearNotice(); render();
-  try {
-    await post('/v1/onboarding/complete', { profile:{ owner_id:form.ownerId,agent_name:form.agentName,usage_type:form.usageType,autonomy_mode:form.autonomy,language:form.language,tone:form.tone,response_length:'medium',use_humor:false,salutation_style:'adaptive',email_signature:form.emailSignature }, provider:form.provider, model:form.model||'default' });
-    dashboardMode = true;
-    await loadDashboard(true);
-    showNotice('MAIL-AGENT v0.2 ist aktiviert.','success');
-  } catch (err) { showNotice(err.message,'error'); }
-  finally { busy = false; render(); }
-}
-async function loadDashboard(silent=false) {
-  if (!silent) { busy = true; clearNotice(); render(); }
-  try {
-    const mailboxData = await get('/v1/mailboxes');
-    const approvalData = await get('/v1/approvals?status=pending&limit=50');
-    dashboard.mailboxes = mailboxData.mailboxes || [];
-    dashboard.approvals = approvalData.approvals || [];
-    dashboard.drafts = (await get('/v1/drafts?limit=50')).drafts || [];
-    const active = dashboard.mailboxes[0];
-    dashboard.messages = active ? (await get(`/v1/mailboxes/${encodeURIComponent(active.mailbox_id)}/messages?limit=20`)).messages || [] : [];
-  } catch (err) {
-    showNotice(err.message,'error');
-  } finally {
-    busy = false;
-    render();
-  }
-}
-async function syncNow() {
-  busy = true; clearNotice(); render();
-  try {
-    const active = dashboard.mailboxes[0];
-    await post('/v1/sync/run', {mailbox_id: active?.mailbox_id || mailboxId, limit: 100});
-    await loadDashboard(true);
-    showNotice('Postfach erfolgreich synchronisiert.','success');
-  } catch (err) { showNotice(err.message,'error'); }
-  finally { busy = false; render(); }
-}
-async function decideApproval(id, decision) {
-  busy = true; clearNotice(); render();
-  try {
-    await post(`/v1/approvals/${encodeURIComponent(id)}/${decision}`, {actor:'local-user'});
-    await loadDashboard(true);
-    showNotice(decision === 'approve' ? 'Aktion freigegeben.' : 'Aktion abgelehnt.','success');
-  } catch (err) { showNotice(err.message,'error'); }
-  finally { busy = false; render(); }
-}
-async function boot() {
-  try {
-    const status = await get('/v1/onboarding/status');
-    if (status.identity) {
-      identity = status.identity;
-      form.ownerId = status.identity.owner_id || '';
-      form.agentName = status.identity.agent_name || 'Nova';
-      form.usageType = status.identity.usage_type || 'private';
-    }
-    const mailbox = status.mailboxes?.[0] || status.mailbox;
-    if (mailbox) {
-      mailboxConnected = true;
-      mailboxId = mailbox.mailbox_id;
-      form.emailAddress = mailbox.email_address || '';
-      form.mailboxUsername = mailbox.username || '';
-      form.imapHost = mailbox.imap_host || '';
-      form.imapPort = mailbox.imap_port || 993;
-      form.smtpHost = mailbox.smtp_host || '';
-      form.smtpPort = mailbox.smtp_port || 465;
-    }
-    if (status.configuration) {
-      const cfg = status.configuration;
-      const profile = cfg.profile || {};
-      form.provider = cfg.provider || form.provider;
-      form.model = cfg.model || form.model;
-      form.autonomy = profile.autonomy_mode || form.autonomy;
-      form.language = profile.language || form.language;
-      form.tone = profile.tone || form.tone;
-      form.emailSignature = profile.email_signature || '';
-    }
-    if (status.completed) {
-      dashboardMode = true;
-      await loadDashboard(true);
-    }
-  } catch (err) {
-    showNotice(`Gateway nicht bereit: ${err.message}`, 'error');
-  }
-  render();
-}
+function mailRow(item){const preview=String(item.body_text||'').replace(/\s+/g,' ').slice(0,120);return `<article class="mail-row"><span class="mail-avatar">${esc((item.sender||'?').slice(0,1).toUpperCase())}</span><div class="mail-main"><div class="mail-line"><b>${esc(item.sender||'Unbekannt')}</b><span>${esc(item.sent_at?new Date(item.sent_at).toLocaleDateString():'')}</span></div><h4>${esc(item.subject||'(ohne Betreff)')}</h4><p>${esc(preview)}${(item.body_text||'').length>120?'…':''}</p></div><span class="row-arrow">${icon('chevron',17)}</span></article>`;}
+function approvalCard(item){const p=item.proposal||{};return `<article class="approval"><span class="risk-icon">${icon('shield',19)}</span><div class="approval-copy"><div class="mail-line"><b>${esc(item.action)}</b><span>Risiko: ${esc(item.policy?.risk||'')}</span></div><h4>${esc(p.subject||p.recipient||'Mail-Aktion')}</h4><p>${esc(p.reason||item.policy?.reason||'')}</p></div><div class="approval-actions"><button class="btn secondary compact" data-reject="${esc(item.approval_id)}">${icon('x',15)} Ablehnen</button><button class="btn primary compact" data-approve="${esc(item.approval_id)}">${icon('check',15)} Freigeben</button></div></article>`;}
+function draftCard(item){return `<article class="draft-card"><div class="draft-head"><span>${icon('draft',18)}</span><div><b>${esc(item.subject||'(ohne Betreff)')}</b><small>An ${esc(item.recipient||'offen')}</small></div><span class="badge soft">${esc(item.status)}</span></div><p>${esc(String(item.body||'').slice(0,240))}${(item.body||'').length>240?'…':''}</p></article>`;}
+function bindDashboard(){document.querySelectorAll('[data-view]').forEach(el=>el.onclick=()=>{activeView=el.dataset.view;render();});document.getElementById('sync-now')?.addEventListener('click',syncNow);document.querySelectorAll('[data-approve]').forEach(el=>el.onclick=()=>decideApproval(el.dataset.approve,'approve'));document.querySelectorAll('[data-reject]').forEach(el=>el.onclick=()=>decideApproval(el.dataset.reject,'reject'));}
+async function loadDashboard(silent=false){if(!silent)busy=true;try{const mb=await get('/v1/mailboxes');dashboard.mailboxes=mb.mailboxes||[];dashboard.approvals=(await get('/v1/approvals?status=pending&limit=50')).approvals||[];dashboard.drafts=(await get('/v1/drafts?limit=50')).drafts||[];const active=dashboard.mailboxes[0];dashboard.messages=active?(await get(`/v1/mailboxes/${encodeURIComponent(active.mailbox_id)}/messages?limit=50`)).messages||[]:[];}catch(e){showNotice(e.message,'error')}finally{busy=false;}}
+async function syncNow(){const mb=dashboard.mailboxes[0];if(!mb)return;busy=true;render();try{await post('/v1/sync/run',{mailbox_id:mb.mailbox_id,limit:100});await loadDashboard(true);showNotice('Postfach ist aktuell.')}catch(e){showNotice(e.message,'error')}finally{busy=false;render()}}
+async function decideApproval(id,decision){try{await post(`/v1/approvals/${encodeURIComponent(id)}/${decision}`,{actor:'local-user'});await loadDashboard(true);showNotice(decision==='approve'?'Aktion freigegeben.':'Aktion abgelehnt.');render();}catch(e){showNotice(e.message,'error')}}
+function render(){installed?renderDashboard():renderSetup();}
+async function boot(){try{const status=await get('/v1/onboarding/status');if(status.identity){identity=status.identity;form.ownerId=identity.owner_id||'';form.agentName=identity.agent_name||'Nova';form.usageType=identity.usage_type||'private';}const mb=status.mailboxes?.[0]||status.mailbox;if(mb){mailboxConnected=true;mailboxId=mb.mailbox_id;form.emailAddress=mb.email_address||'';form.mailboxUsername=mb.username||'';form.imapHost=mb.imap_host||'';form.imapPort=mb.imap_port||993;form.smtpHost=mb.smtp_host||'';form.smtpPort=mb.smtp_port||465;}if(status.configuration){const c=status.configuration,p=c.profile||{};form.provider=c.provider||form.provider;form.model=c.model||form.model;form.autonomy=p.autonomy_mode||form.autonomy;form.language=p.language||form.language;form.tone=p.tone||form.tone;form.emailSignature=p.email_signature||'';}installed=!!status.completed;if(installed)await loadDashboard(true);}catch(e){showNotice(`Gateway nicht bereit: ${e.message}`,'error')}render();}
 boot();

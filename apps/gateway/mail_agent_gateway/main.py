@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
+import os
 from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from pathlib import Path
@@ -17,6 +18,7 @@ from mail_agent_core.providers import CodexCliProvider, OllamaProvider
 from mail_agent_imap import ImapMailbox, MailboxConfig, SmtpSender
 
 from .audit import AuditLog
+from .key_store import create_master_key_store
 from .mail_store import MailStore
 from .registry_client import RegistryClient
 from .schemas import (
@@ -39,7 +41,10 @@ identity_manager = IdentityManager(settings.data_dir / "identity")
 state_store = JsonStateStore(settings.data_dir / "state.json")
 audit_log = AuditLog(settings.data_dir / "audit.jsonl")
 mail_store = MailStore(settings.data_dir / "mail.db")
-vault = CredentialVault(settings.data_dir / "secrets.vault", settings.data_dir / "vault.key")
+vault = CredentialVault(
+    settings.data_dir / "secrets.vault",
+    master_key_store=create_master_key_store(settings.data_dir),
+)
 policy_engine = PolicyEngine()
 mail_agent = MailAgent(policy_engine)
 sync_service = MailSyncService(mail_store, vault)
@@ -133,7 +138,7 @@ async def lifespan(_: FastAPI):
                 await task
 
 
-app = FastAPI(title="MAIL-AGENT Gateway", version="0.2.0", lifespan=lifespan)
+app = FastAPI(title="MAIL-AGENT Gateway", version="0.2.1", lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -145,7 +150,7 @@ app.add_middleware(
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "service": "mail-agent-gateway", "version": "0.2.0"}
+    return {"status": "ok", "service": "mail-agent-gateway", "version": "0.2.1"}
 
 
 @app.get("/v1/onboarding/status")
@@ -447,7 +452,7 @@ async def analyze_mail(body: AgentAnalyzeRequest) -> dict:
     return payload
 
 
-web_dir = Path(__file__).resolve().parents[2] / "web"
+web_dir = Path(os.getenv("MAIL_AGENT_WEB_DIR", str(Path(__file__).resolve().parents[2] / "web")))
 if web_dir.exists():
     app.mount("/assets", StaticFiles(directory=web_dir), name="assets")
     app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
