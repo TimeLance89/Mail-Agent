@@ -3,6 +3,9 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import os
+import subprocess
+import threading
+import time
 from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
 from pathlib import Path
@@ -16,6 +19,7 @@ from mail_agent_core.agent import MailAgent
 from mail_agent_core.identity import IdentityManager
 from mail_agent_core.policy import PolicyEngine
 from mail_agent_core.providers import CodexCliProvider, OllamaProvider
+from mail_agent_core.update import UpdateClient
 from mail_agent_imap import ImapMailbox, MailboxConfig, SmtpSender
 
 from .audit import AuditLog
@@ -177,7 +181,14 @@ async def lifespan(_: FastAPI):
                 await task
 
 
-app = FastAPI(title="MAIL-AGENT Gateway", version="0.2.4", lifespan=lifespan)
+APP_VERSION = "0.3.0"
+update_client = UpdateClient(
+    feed_url=settings.update_feed_url,
+    release_page=settings.update_release_page,
+    token=os.getenv("MAIL_AGENT_UPDATE_TOKEN", "").strip() or None,
+)
+
+app = FastAPI(title="MAIL-AGENT Gateway", version=APP_VERSION, lifespan=lifespan)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=settings.cors_origins,
@@ -189,7 +200,7 @@ app.add_middleware(
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "service": "mail-agent-gateway", "version": "0.2.4"}
+    return {"status": "ok", "service": "mail-agent-gateway", "version": APP_VERSION}
 
 
 @app.get("/v1/onboarding/status")
@@ -398,6 +409,69 @@ async def google_oauth_callback(
     return await _finish_google_oauth(
         state=state, code=code, error=error, error_description=error_description
     )
+
+
+
+@app.get("/v1/system/update")
+async def system_update_status() -> dict:
+    info = await asyncio.to_thread(update_client.check, APP_VERSION)
+    result = info.public()
+    result.update(
+        {
+            "channel": "Preview",
+            "automatic_checks": True,
+            "check_interval_seconds": 21600,
+        }
+    )
+    return result
+
+
+def _terminate_for_update(delay: float = 1.5) -> None:
+    time.sleep(delay)
+    os._exit(0)
+
+
+@app.post("/v1/system/update/install")
+async def install_system_update() -> dict:
+    if os.name != "nt":
+        raise HTTPException(
+            status_code=409,
+            detail="Automatische Installation ist aktuell nur unter Windows verfügbar",
+        )
+    info = await asyncio.to_thread(update_client.check, APP_VERSION)
+    if info.error:
+        raise HTTPException(
+            status_code=503,
+            detail=f"Der automatische Update-Kanal ist momentan nicht erreichbar: {info.error}",
+        )
+    if not info.available:
+        return {"installing": False, "up_to_date": True, "version": APP_VERSION}
+    try:
+        updates_dir = settings.data_dir.parent / "updates"
+        updates_dir.mkdir(parents=True, exist_ok=True)
+        installer = updates_dir / f"Mail-Agent-Setup-{info.latest_version}.exe"
+        installer = await asyncio.to_thread(update_client.download, info, installer)
+        helper = installer.with_name("apply-mail-agent-update.cmd")
+        helper.write_text(
+            "@echo off\\r\\n"
+            "timeout /t 2 /nobreak >nul\\r\\n"
+            f'"{installer}" /SP- /VERYSILENT /SUPPRESSMSGBOXES /NORESTART /CLOSEAPPLICATIONS\\r\\n'
+            'del "%~f0" >nul 2>&1\\r\\n',
+            encoding="utf-8",
+        )
+        subprocess.Popen(
+            [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", str(helper)],
+            close_fds=True,
+            creationflags=getattr(subprocess, "CREATE_NO_WINDOW", 0),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Update konnte nicht gestartet werden: {exc}") from exc
+    threading.Thread(
+        target=_terminate_for_update,
+        daemon=True,
+        name="mail-agent-update-exit",
+    ).start()
+    return {"installing": True, "latest_version": info.latest_version}
 
 
 @app.post("/v1/providers/probe")
