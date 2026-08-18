@@ -76,6 +76,42 @@ jobs:
             dist/Mail-Agent-macOS.zip
           if-no-files-found: ignore
 
+  publish-preview:
+    if: github.ref == 'refs/heads/main'
+    needs: [windows, standalone]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          path: release-assets
+          merge-multiple: true
+      - name: Point preview tag at current main
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -f preview-latest "$GITHUB_SHA"
+          git push origin refs/tags/preview-latest --force
+      - name: Create or update direct-download preview release
+        shell: bash
+        run: |
+          if gh release view preview-latest >/dev/null 2>&1; then
+            gh release edit preview-latest \
+              --title "MAIL-AGENT Preview" \
+              --prerelease \
+              --notes "Automatisch gebaut aus dem aktuellen main-Stand. Für Windows einfach Mail-Agent-Setup.exe herunterladen und ausführen."
+          else
+            gh release create preview-latest \
+              --title "MAIL-AGENT Preview" \
+              --prerelease \
+              --notes "Automatisch gebaut aus dem aktuellen main-Stand. Für Windows einfach Mail-Agent-Setup.exe herunterladen und ausführen."
+          fi
+          gh release upload preview-latest release-assets/* --clobber
+
   release:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [windows, standalone]
