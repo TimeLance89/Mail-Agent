@@ -1,0 +1,320 @@
+diff --git a/apps/gateway/mail_agent_gateway/main.py b/apps/gateway/mail_agent_gateway/main.py
+index c052e35..ad16f43 100644
+--- a/apps/gateway/mail_agent_gateway/main.py
++++ b/apps/gateway/mail_agent_gateway/main.py
+@@ -8,6 +8,7 @@ from dataclasses import asdict
+ from pathlib import Path
+ 
+ from fastapi import FastAPI, HTTPException
++from fastapi.responses import FileResponse, HTMLResponse
+ from fastapi.middleware.cors import CORSMiddleware
+ from fastapi.staticfiles import StaticFiles
+ 
+@@ -18,8 +19,11 @@ from mail_agent_core.providers import CodexCliProvider, OllamaProvider
+ from mail_agent_imap import ImapMailbox, MailboxConfig, SmtpSender
+ 
+ from .audit import AuditLog
++from .cloud_sync import GoogleGmailSyncService
+ from .key_store import create_master_key_store
+ from .mail_store import MailStore
++from .oauth_controller import OAuthController
++from .oauth_runtime import current_google_access_token
+ from .registry_client import RegistryClient
+ from .schemas import (
+     AgentAnalyzeRequest,
+@@ -27,6 +31,7 @@ from .schemas import (
+     IdentitySetupRequest,
+     MailboxProbeRequest,
+     OnboardingCompleteRequest,
++    OAuthStartRequest,
+     ProviderProbeRequest,
+     RegistrationResponse,
+     SyncRunRequest,
+@@ -48,6 +53,13 @@ vault = CredentialVault(
+ policy_engine = PolicyEngine()
+ mail_agent = MailAgent(policy_engine)
+ sync_service = MailSyncService(mail_store, vault)
++gmail_sync_service = GoogleGmailSyncService(mail_store)
++oauth_controller = OAuthController(
++    settings=settings,
++    state_store=state_store,
++    vault=vault,
++    audit_log=audit_log,
++)
+ providers = {
+     "ollama": OllamaProvider(settings.ollama_base_url),
+     "codex": CodexCliProvider(settings.codex_binary),
+@@ -73,10 +85,15 @@ def _public_mailbox(mailbox: dict) -> dict:
+     return {key: value for key, value in mailbox.items() if key != "credential_ref"}
+ 
+ 
+-def _runtime_mailbox(mailbox_id: str) -> MailboxRuntimeConfig:
++def _mailbox_by_id(mailbox_id: str) -> dict:
+     mailbox = next((item for item in _configured_mailboxes() if item.get("mailbox_id") == mailbox_id), None)
+     if mailbox is None:
+         raise KeyError(mailbox_id)
++    return mailbox
++
++
++def _runtime_mailbox(mailbox_id: str) -> MailboxRuntimeConfig:
++    mailbox = _mailbox_by_id(mailbox_id)
+     credential_ref = mailbox.get("credential_ref")
+     if not credential_ref or not vault.contains(credential_ref):
+         raise RuntimeError("Mailbox credential is missing from the encrypted vault")
+@@ -92,15 +109,37 @@ def _runtime_mailbox(mailbox_id: str) -> MailboxRuntimeConfig:
+     )
+ 
+ 
+-async def _sync_once(config: MailboxRuntimeConfig, *, limit: int = 100) -> dict:
++async def _sync_mailbox(mailbox: dict, *, limit: int = 100) -> dict:
++    mailbox_id = mailbox["mailbox_id"]
+     try:
+-        result = await sync_service.sync(config, limit=limit)
++        if mailbox.get("connector") == "gmail_api":
++            if not settings.google_client_id:
++                raise RuntimeError("Google OAuth is not configured in this MAIL-AGENT build")
++            access_token = await current_google_access_token(
++                mailbox,
++                vault=vault,
++                client_id=settings.google_client_id,
++                client_secret=settings.google_client_secret,
++            )
++            result = await gmail_sync_service.sync(
++                mailbox_id=mailbox_id,
++                access_token=access_token,
++                limit=limit,
++            )
++        else:
++            result = await sync_service.sync(_runtime_mailbox(mailbox_id), limit=limit)
+         audit_log.append("mailbox_synced", details=result)
+         return result
+     except Exception as exc:
++        mail_store.record_sync(
++            mailbox_id,
++            last_uid=mail_store.get_last_uid(mailbox_id),
++            error=str(exc),
++            cursor=mail_store.sync_status(mailbox_id).get("cursor"),
++        )
+         audit_log.append(
+             "mailbox_sync_failed",
+-            details={"mailbox_id": config.mailbox_id, "error": str(exc)},
++            details={"mailbox_id": mailbox_id, "error": str(exc)},
+         )
+         raise
+ 
+@@ -112,7 +151,7 @@ async def _sync_loop() -> None:
+             if not mailbox_id:
+                 continue
+             try:
+-                await _sync_once(_runtime_mailbox(mailbox_id))
++                await _sync_mailbox(mailbox)
+             except Exception:
+                 # Per-mailbox error is persisted/audited; the worker must survive transient failures.
+                 pass
+@@ -127,7 +166,7 @@ async def lifespan(_: FastAPI):
+     task: asyncio.Task | None = None
+     _sync_stop.clear()
+     if settings.auto_sync_enabled:
+-        task = asyncio.create_task(_sync_loop(), name="mail-agent-imap-sync")
++        task = asyncio.create_task(_sync_loop(), name="mail-agent-mailbox-sync")
+     try:
+         yield
+     finally:
+@@ -138,7 +177,7 @@ async def lifespan(_: FastAPI):
+                 await task
+ 
+ 
+-app = FastAPI(title="MAIL-AGENT Gateway", version="0.2.1", lifespan=lifespan)
++app = FastAPI(title="MAIL-AGENT Gateway", version="0.2.4", lifespan=lifespan)
+ app.add_middleware(
+     CORSMiddleware,
+     allow_origins=settings.cors_origins,
+@@ -150,7 +189,7 @@ app.add_middleware(
+ 
+ @app.get("/health")
+ async def health() -> dict:
+-    return {"status": "ok", "service": "mail-agent-gateway", "version": "0.2.1"}
++    return {"status": "ok", "service": "mail-agent-gateway", "version": "0.2.4"}
+ 
+ 
+ @app.get("/v1/onboarding/status")
+@@ -274,7 +313,7 @@ async def sync_now(body: SyncRunRequest) -> dict:
+     results = []
+     for mailbox_id in mailbox_ids:
+         try:
+-            results.append(await _sync_once(_runtime_mailbox(mailbox_id), limit=body.limit))
++            results.append(await _sync_mailbox(_mailbox_by_id(mailbox_id), limit=body.limit))
+         except KeyError as exc:
+             raise HTTPException(status_code=404, detail=f"Unknown mailbox: {mailbox_id}") from exc
+         except Exception as exc:
+@@ -289,6 +328,78 @@ async def list_messages(mailbox_id: str, limit: int = 50) -> dict:
+     return {"messages": mail_store.list_messages(mailbox_id, limit)}
+ 
+ 
++@app.get("/v1/oauth/providers")
++async def oauth_provider_status() -> dict:
++    return oauth_controller.provider_status()
++
++
++@app.post("/v1/oauth/google/start")
++async def start_google_oauth(body: OAuthStartRequest) -> dict:
++    try:
++        result = oauth_controller.start_google(body.login_hint)
++    except RuntimeError as exc:
++        raise HTTPException(status_code=409, detail=str(exc)) from exc
++    return {
++        "provider": result.provider,
++        "state": result.state,
++        "authorization_url": result.authorization_url,
++    }
++
++
++@app.get("/v1/oauth/sessions/{state}")
++async def oauth_session_status(state: str) -> dict:
++    try:
++        return oauth_controller.sessions.get(state).public()
++    except KeyError as exc:
++        raise HTTPException(status_code=404, detail="OAuth session not found or expired") from exc
++
++
++async def _finish_google_oauth(
++    *,
++    state: str | None,
++    code: str | None,
++    error: str | None,
++    error_description: str | None,
++) -> HTMLResponse:
++    if not state:
++        raise HTTPException(status_code=400, detail="Missing OAuth state")
++    if error:
++        message = error_description or error
++        oauth_controller.fail(state=state, provider="google", error=message)
++        return HTMLResponse(_oauth_result_page(False, "Google-Anmeldung abgebrochen", message))
++    if not code:
++        oauth_controller.fail(state=state, provider="google", error="Authorization code is missing")
++        return HTMLResponse(_oauth_result_page(False, "Google-Anmeldung fehlgeschlagen", "Kein Autorisierungscode erhalten."))
++    try:
++        result = await oauth_controller.complete_google(state=state, code=code)
++        return HTMLResponse(
++            _oauth_result_page(
++                True,
++                "Gmail ist verbunden",
++                f"{result.get('email_address') or 'Das Postfach'} wurde sicher mit MAIL-AGENT verbunden.",
++            )
++        )
++    except KeyError as exc:
++        raise HTTPException(status_code=400, detail="OAuth session not found or expired") from exc
++    except Exception as exc:
++        return HTMLResponse(
++            _oauth_result_page(False, "Google-Anmeldung fehlgeschlagen", str(exc)),
++            status_code=502,
++        )
++
++
++@app.get("/v1/oauth/google/callback", response_class=HTMLResponse, include_in_schema=False)
++async def google_oauth_callback(
++    state: str | None = None,
++    code: str | None = None,
++    error: str | None = None,
++    error_description: str | None = None,
++) -> HTMLResponse:
++    return await _finish_google_oauth(
++        state=state, code=code, error=error, error_description=error_description
++    )
++
++
+ @app.post("/v1/providers/probe")
+ async def provider_probe(body: ProviderProbeRequest) -> dict:
+     provider = providers[body.provider]
+@@ -452,7 +563,27 @@ async def analyze_mail(body: AgentAnalyzeRequest) -> dict:
+     return payload
+ 
+ 
++def _oauth_result_page(success: bool, title: str, message: str) -> str:
++    accent = "#4ade80" if success else "#fb7185"
++    safe_title = title.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
++    safe_message = message.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
++    return f"""<!doctype html><html lang="de"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{safe_title}</title><style>body{{margin:0;background:#08111f;color:#edf3ff;font-family:Segoe UI,system-ui,sans-serif;display:grid;place-items:center;min-height:100vh}}main{{width:min(520px,calc(100% - 40px));background:#0d1726;border:1px solid #20304a;border-radius:22px;padding:34px;box-shadow:0 30px 80px #0008}}i{{display:block;width:14px;height:14px;border-radius:50%;background:{accent};box-shadow:0 0 28px {accent};margin-bottom:22px}}h1{{font-size:25px;margin:0 0 10px}}p{{color:#91a4c2;line-height:1.55;margin:0}}small{{display:block;color:#64748b;margin-top:24px}}</style></head><body><main><i></i><h1>{safe_title}</h1><p>{safe_message}</p><small>Dieses Fenster kann geschlossen werden. MAIL-AGENT übernimmt automatisch.</small></main><script>try{{window.opener&&window.opener.postMessage({{type:'mail-agent-oauth',provider:'google',success:{str(success).lower()}}},location.origin)}}catch(e){{}}setTimeout(()=>window.close(),1400)</script></body></html>"""
++
++
+ web_dir = Path(os.getenv("MAIL_AGENT_WEB_DIR", str(Path(__file__).resolve().parents[2] / "web")))
+ if web_dir.exists():
++    @app.get("/", include_in_schema=False)
++    async def web_root(
++        state: str | None = None,
++        code: str | None = None,
++        error: str | None = None,
++        error_description: str | None = None,
++    ):
++        if state or code or error:
++            return await _finish_google_oauth(
++                state=state, code=code, error=error, error_description=error_description
++            )
++        return FileResponse(web_dir / "index.html")
++
+     app.mount("/assets", StaticFiles(directory=web_dir), name="assets")
+     app.mount("/", StaticFiles(directory=web_dir, html=True), name="web")
+diff --git a/apps/gateway/mail_agent_gateway/oauth_controller.py b/apps/gateway/mail_agent_gateway/oauth_controller.py
+index 154fe80..2549873 100644
+--- a/apps/gateway/mail_agent_gateway/oauth_controller.py
++++ b/apps/gateway/mail_agent_gateway/oauth_controller.py
+@@ -108,6 +108,8 @@ class OAuthController:
+                 redirect_uri=session.redirect_uri,
+                 code_verifier=session.code_verifier,
+             )
++            if not tokens.refresh_token:
++                raise RuntimeError("Google did not issue a refresh token; reconnect the mailbox")
+             profile = await GoogleGmailClient(tokens.access_token).profile()
+             email = profile.get("emailAddress")
+             if not email:
+@@ -123,6 +125,7 @@ class OAuthController:
+                     "username": email,
+                     "credential_ref": credential_ref,
+                     "credential_state": "encrypted-oauth-vault",
++                    "scope": tokens.scope,
+                 }
+             )
+             self.sessions.update(state, status="complete", mailbox_id=mailbox_id, email_address=email)
+diff --git a/apps/gateway/mail_agent_gateway/settings.py b/apps/gateway/mail_agent_gateway/settings.py
+index 283499c..f525f74 100644
+--- a/apps/gateway/mail_agent_gateway/settings.py
++++ b/apps/gateway/mail_agent_gateway/settings.py
+@@ -3,6 +3,8 @@ from __future__ import annotations
+ import os
+ from pathlib import Path
+ 
++from .oauth_defaults import GOOGLE_CLIENT_ID
++
+ 
+ class Settings:
+     host = os.getenv("MAIL_AGENT_GATEWAY_HOST", "127.0.0.1")
+@@ -20,11 +22,11 @@ class Settings:
+     codex_binary = os.getenv("CODEX_BINARY", "codex")
+     sync_interval_seconds = max(15, int(os.getenv("MAIL_AGENT_SYNC_INTERVAL_SECONDS", "60")))
+     auto_sync_enabled = os.getenv("MAIL_AGENT_AUTO_SYNC", "true").lower() in {"1", "true", "yes", "on"}
+-    google_client_id = os.getenv("MAIL_AGENT_GOOGLE_CLIENT_ID", "").strip()
++    google_client_id = os.getenv("MAIL_AGENT_GOOGLE_CLIENT_ID", GOOGLE_CLIENT_ID).strip()
+     google_client_secret = os.getenv("MAIL_AGENT_GOOGLE_CLIENT_SECRET", "").strip() or None
+     google_redirect_uri = os.getenv(
+         "MAIL_AGENT_GOOGLE_REDIRECT_URI",
+-        f"http://127.0.0.1:{port}/v1/oauth/google/callback",
++        f"http://127.0.0.1:{port}",
+     )
+     microsoft_client_id = os.getenv("MAIL_AGENT_MICROSOFT_CLIENT_ID", "").strip()
+     microsoft_tenant = os.getenv("MAIL_AGENT_MICROSOFT_TENANT", "common").strip() or "common"
+diff --git a/connectors/google/mail_agent_google/client.py b/connectors/google/mail_agent_google/client.py
+index e6ae126..a2511eb 100644
+--- a/connectors/google/mail_agent_google/client.py
++++ b/connectors/google/mail_agent_google/client.py
+@@ -63,10 +63,8 @@ class GoogleOAuthClient:
+             "client_id": self.client_id,
+             "redirect_uri": redirect_uri,
+             "response_type": "code",
+-            "scope": f"openid email {GMAIL_SCOPE}",
++            "scope": GMAIL_SCOPE,
+             "access_type": "offline",
+-            "include_granted_scopes": "true",
+-            "prompt": "consent",
+             "state": state,
+             "code_challenge": code_challenge,
+             "code_challenge_method": "S256",
