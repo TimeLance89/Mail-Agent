@@ -16,7 +16,7 @@ from pathlib import Path
 from typing import Any
 
 APP_NAME = "MAIL-AGENT"
-APP_VERSION = "0.2.2"
+APP_VERSION = "0.2.3"
 GATEWAY_PORT = 8765
 REGISTRY_PORT = 8770
 GATEWAY_URL = f"http://127.0.0.1:{GATEWAY_PORT}"
@@ -195,6 +195,7 @@ def run_server(app: Any, port: int, name: str, errors: queue.Queue[tuple[str, Ba
             port=port,
             log_level="warning",
             access_log=False,
+            log_config=None,
         )
         server = uvicorn.Server(config)
         server.run()
