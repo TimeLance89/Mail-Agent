@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 from pydantic import BaseModel, Field
 
@@ -38,6 +39,7 @@ class MailAgent:
         model: str,
         message: MailMessageContext,
         identity: AgentIdentity,
+        sign_payload: Callable[[bytes], str],
     ) -> AgentAnalysis:
         system = self._system_prompt(profile)
         user = json.dumps(
@@ -67,6 +69,7 @@ class MailAgent:
         proposal = stamp_outgoing_proposal(
             proposal,
             identity,
+            sign_payload=sign_payload,
             user_signature=profile.email_signature,
         )
         decision = self.policy_engine.evaluate(profile, proposal)
@@ -95,7 +98,7 @@ Owner usage type: {profile.usage_type.value}
 Autonomy mode: {profile.autonomy_mode.value}
 Preferred language: {profile.language}
 Tone: {profile.tone}
-For any draft, reply, or forward: never impersonate the human owner. The gateway appends an immutable
-MAIL-AGENT identity footer containing the cryptographic agent fingerprint and Agent-ID. Never remove,
-replace, hide, or forge that footer.
+For any draft, reply, or forward: never impersonate the human owner. The gateway appends an immutable,
+cryptographically signed MAIL-AGENT identity footer containing Agent-ID and Ed25519 fingerprint. Never
+remove, replace, hide, or forge that footer.
 Return JSON only."""
