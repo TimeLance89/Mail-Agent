@@ -9,6 +9,8 @@ let activeView = 'overview';
 let dashboard = { mailboxes: [], approvals: [], messages: [], drafts: [] };
 let mailboxConnected = false;
 let mailboxId = null;
+let updateStatus = null;
+let updateLoading = false;
 let mailboxConnector = null;
 let oauthProviders = { google: { configured: false } };
 const form = {
@@ -64,7 +66,7 @@ function stepper() {
   return `<div class="setup-stepper">${onboardingSteps.map((label, i) => `<div class="setup-dot ${i < step ? 'done' : ''} ${i === step ? 'active' : ''}"><span>${i < step ? icon('check',13) : i+1}</span><small>${label}</small></div>`).join('')}</div>`;
 }
 function setupLayout(content) {
-  return `<main class="setup-page"><section class="setup-aside">${brand()}<div class="setup-aside-copy"><span class="kicker">SETUP IN WENIGEN MINUTEN</span><h1>Dein Postfach.<br><em>Dein Agent.</em></h1><p>MAIL-AGENT arbeitet lokal, kontrolliert und ausschließlich für E-Mail.</p></div><div class="trust-pill">${icon('shield',18)}<span><b>Local-first</b><small>Schlüssel und Mail-Zugang bleiben bei dir.</small></span></div></section><section class="setup-main"><div class="setup-top"><span>Schritt ${step+1} von ${onboardingSteps.length}</span><b>${onboardingSteps[step]}</b></div>${stepper()}<div class="setup-card">${content}</div><div class="setup-foot">MAIL-AGENT v0.2.4 · Lokales Gateway</div></section></main>`;
+  return `<main class="setup-page"><section class="setup-aside">${brand()}<div class="setup-aside-copy"><span class="kicker">SETUP IN WENIGEN MINUTEN</span><h1>Dein Postfach.<br><em>Dein Agent.</em></h1><p>MAIL-AGENT arbeitet lokal, kontrolliert und ausschließlich für E-Mail.</p></div><div class="trust-pill">${icon('shield',18)}<span><b>Local-first</b><small>Schlüssel und Mail-Zugang bleiben bei dir.</small></span></div></section><section class="setup-main"><div class="setup-top"><span>Schritt ${step+1} von ${onboardingSteps.length}</span><b>${onboardingSteps[step]}</b></div>${stepper()}<div class="setup-card">${content}</div><div class="setup-foot">MAIL-AGENT v0.3.0 · Lokales Gateway</div></section></main>`;
 }
 function field(label, id, value='', type='text', placeholder='') {
   return `<label class="field"><span>${label}</span><input id="${id}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}"></label>`;
@@ -168,11 +170,52 @@ function renderDashboard(){
   if(activeView==='approvals') content=`<section class="panel full"><div class="panel-head"><div><span>HUMAN-IN-THE-LOOP</span><h3>Freigabe-Queue</h3></div><span class="badge">${dashboard.approvals.length} offen</span></div>${dashboard.approvals.length?dashboard.approvals.map(approvalCard).join(''):emptyState('shield','Alles erledigt','Es gibt aktuell keine offenen Aktionen.')}</section>`;
   if(activeView==='drafts') content=`<section class="panel full"><div class="panel-head"><div><span>VORBEREITET VON ${esc((form.agentName||'Agent').toUpperCase())}</span><h3>Entwürfe</h3></div><span class="badge">${dashboard.drafts.length}</span></div>${dashboard.drafts.length?dashboard.drafts.map(draftCard).join(''):emptyState('draft','Noch keine Entwürfe','Sobald dein Agent Antworten vorbereitet, erscheinen sie hier.')}</section>`;
   if(activeView==='settings') content=`<div class="settings-grid"><section class="panel"><div class="panel-head"><div><span>AGENT</span><h3>Persönlichkeit</h3></div></div><div class="setting-row"><span>Name</span><b>${esc(form.agentName)}</b></div><div class="setting-row"><span>Einsatz</span><b>${esc(form.usageType)}</b></div><div class="setting-row"><span>Ton</span><b>${esc(form.tone)}</b></div><div class="setting-row"><span>Autonomie</span><b>${esc(form.autonomy)}</b></div></section><section class="panel"><div class="panel-head"><div><span>SICHERHEIT</span><h3>Lokale Vertrauensbasis</h3></div></div><div class="security-block">${icon('lock',22)}<div><b>Credential Vault aktiv</b><p>Mailbox-Secrets und Agent-Schlüssel bleiben lokal geschützt.</p></div></div><div class="security-block">${icon('shield',22)}<div><b>Freigaben erzwungen</b><p>Senden, Löschen und Weiterleiten können nicht vom Modell selbst freigegeben werden.</p></div></div></section></div>`;
-  app.innerHTML=dashboardLayout(content); bindDashboard();
+  app.innerHTML=dashboardLayout(content); if(activeView==='settings')renderUpdatePanel(); bindDashboard();
 }
 function mailRow(item){const preview=String(item.body_text||'').replace(/\s+/g,' ').slice(0,120);return `<article class="mail-row"><span class="mail-avatar">${esc((item.sender||'?').slice(0,1).toUpperCase())}</span><div class="mail-main"><div class="mail-line"><b>${esc(item.sender||'Unbekannt')}</b><span>${esc(item.sent_at?new Date(item.sent_at).toLocaleDateString():'')}</span></div><h4>${esc(item.subject||'(ohne Betreff)')}</h4><p>${esc(preview)}${(item.body_text||'').length>120?'…':''}</p></div><span class="row-arrow">${icon('chevron',17)}</span></article>`;}
 function approvalCard(item){const p=item.proposal||{};return `<article class="approval"><span class="risk-icon">${icon('shield',19)}</span><div class="approval-copy"><div class="mail-line"><b>${esc(item.action)}</b><span>Risiko: ${esc(item.policy?.risk||'')}</span></div><h4>${esc(p.subject||p.recipient||'Mail-Aktion')}</h4><p>${esc(p.reason||item.policy?.reason||'')}</p></div><div class="approval-actions"><button class="btn secondary compact" data-reject="${esc(item.approval_id)}">${icon('x',15)} Ablehnen</button><button class="btn primary compact" data-approve="${esc(item.approval_id)}">${icon('check',15)} Freigeben</button></div></article>`;}
 function draftCard(item){return `<article class="draft-card"><div class="draft-head"><span>${icon('draft',18)}</span><div><b>${esc(item.subject||'(ohne Betreff)')}</b><small>An ${esc(item.recipient||'offen')}</small></div><span class="badge soft">${esc(item.status)}</span></div><p>${esc(String(item.body||'').slice(0,240))}${(item.body||'').length>240?'…':''}</p></article>`;}
+
+function renderUpdatePanel(){
+  const grid=document.querySelector('.settings-grid');
+  if(!grid)return;
+  const current=updateStatus?.current_version||'0.3.0';
+  const available=!!updateStatus?.available;
+  const error=updateStatus?.error||'';
+  const headline=available?`Version ${esc(updateStatus.latest_version)} verfügbar`:error?'Update-Kanal nicht erreichbar':'Du bist auf dem neuesten Stand';
+  const detail=error?esc(error):available?'Der Installer wird über HTTPS geladen, per SHA-256 geprüft und über die bestehende Installation installiert.':'MAIL-AGENT prüft im Hintergrund automatisch auf neue Releases.';
+  grid.insertAdjacentHTML('beforeend',`<section class="panel update-panel"><div class="panel-head"><div><span>SOFTWARE & UPDATES</span><h3>MAIL-AGENT aktualisieren</h3></div><span class="badge soft">v${esc(current)}</span></div><div class="setting-row"><span>Installierte Version</span><b>${esc(current)}</b></div><div class="setting-row"><span>Update-Kanal</span><b>${esc(updateStatus?.channel||'Preview')}</b></div><div class="setting-row"><span>Automatische Prüfung</span><b>${updateStatus?.automatic_checks===false?'Aus':'Aktiv · alle 6 Stunden'}</b></div><div class="security-block">${icon('sync',22)}<div><b>${headline}</b><p>${detail}</p></div></div><div class="inline-actions left"><button class="btn secondary" id="check-update" ${updateLoading?'disabled':''}>${updateLoading?'Prüfe …':'Jetzt nach Updates suchen'}</button>${available?'<button class="btn primary" id="install-update">Update installieren</button>':''}${error?'<button class="btn text" id="open-release">Release-Seite öffnen</button>':''}</div><div class="security-note">${icon('shield',18)}<span>Updates ersetzen nur Programmdateien. Identität, Gmail-Tokens, Einstellungen und lokale Mail-Daten bleiben erhalten.</span></div></section>`);
+  if(!updateStatus&&!updateLoading)setTimeout(()=>checkUpdate(true),0);
+}
+async function checkUpdate(silent=false){
+  if(updateLoading)return;
+  updateLoading=true;
+  if(activeView==='settings')render();
+  try{
+    updateStatus=await get('/v1/system/update');
+    if(!silent){
+      if(updateStatus.available)showNotice(`MAIL-AGENT ${updateStatus.latest_version} ist verfügbar.`);
+      else if(updateStatus.error)showNotice('Automatischer Update-Kanal momentan nicht erreichbar.','error');
+      else showNotice('MAIL-AGENT ist aktuell.');
+    }
+  }catch(e){showNotice(e.message,'error');}
+  finally{updateLoading=false;if(activeView==='settings')render();}
+}
+async function installUpdate(){
+  try{
+    const result=await post('/v1/system/update/install',{});
+    if(result.installing)showNotice('Update wird installiert. MAIL-AGENT startet anschließend automatisch neu.');
+    else showNotice('MAIL-AGENT ist bereits aktuell.');
+  }catch(e){showNotice(e.message,'error');}
+}
+document.addEventListener('click',event=>{
+  const button=event.target.closest('#check-update,#install-update,#open-release');
+  if(!button)return;
+  if(button.id==='check-update')checkUpdate(false);
+  if(button.id==='install-update')installUpdate();
+  if(button.id==='open-release')window.open(updateStatus?.release_page||'https://github.com/TimeLance89/Mail-Agent/releases/tag/preview-latest','_blank');
+});
+
 function bindDashboard(){document.querySelectorAll('[data-view]').forEach(el=>el.onclick=()=>{activeView=el.dataset.view;render();});document.getElementById('sync-now')?.addEventListener('click',syncNow);document.querySelectorAll('[data-approve]').forEach(el=>el.onclick=()=>decideApproval(el.dataset.approve,'approve'));document.querySelectorAll('[data-reject]').forEach(el=>el.onclick=()=>decideApproval(el.dataset.reject,'reject'));}
 async function loadDashboard(silent=false){if(!silent)busy=true;try{const mb=await get('/v1/mailboxes');dashboard.mailboxes=mb.mailboxes||[];dashboard.approvals=(await get('/v1/approvals?status=pending&limit=50')).approvals||[];dashboard.drafts=(await get('/v1/drafts?limit=50')).drafts||[];const active=dashboard.mailboxes[0];dashboard.messages=active?(await get(`/v1/mailboxes/${encodeURIComponent(active.mailbox_id)}/messages?limit=50`)).messages||[]:[];}catch(e){showNotice(e.message,'error')}finally{busy=false;}}
 async function syncNow(){const mb=dashboard.mailboxes[0];if(!mb)return;busy=true;render();try{await post('/v1/sync/run',{mailbox_id:mb.mailbox_id,limit:100});await loadDashboard(true);showNotice('Postfach ist aktuell.')}catch(e){showNotice(e.message,'error')}finally{busy=false;render()}}
