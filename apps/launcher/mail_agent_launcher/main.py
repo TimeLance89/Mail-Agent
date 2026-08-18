@@ -7,6 +7,7 @@ import os
 import platform
 import queue
 import socket
+import subprocess
 import sys
 import threading
 import time
@@ -15,11 +16,15 @@ import webbrowser
 from pathlib import Path
 from typing import Any
 
+from mail_agent_core.update import UpdateClient
+
 APP_NAME = "MAIL-AGENT"
-APP_VERSION = "0.2.4"
+APP_VERSION = "0.2.5"
 GATEWAY_PORT = 8765
 REGISTRY_PORT = 8770
 GATEWAY_URL = f"http://127.0.0.1:{GATEWAY_PORT}"
+UPDATE_FEED_URL = os.getenv("MAIL_AGENT_UPDATE_FEED_URL", "https://api.github.com/repos/TimeLance89/Mail-Agent/releases/tags/preview-latest")
+UPDATE_RELEASE_PAGE = os.getenv("MAIL_AGENT_UPDATE_RELEASE_PAGE", "https://github.com/TimeLance89/Mail-Agent/releases/tag/preview-latest")
 
 
 def user_data_dir() -> Path:
@@ -114,6 +119,15 @@ def show_info_dialog(message: str) -> None:
     logging.info("%s", message)
 
 
+def show_confirm_dialog(message: str, *, title: str = "MAIL-AGENT") -> bool:
+    if platform.system() == "Windows":
+        try:
+            return ctypes.windll.user32.MessageBoxW(None, message, title, 0x04 | 0x40) == 6
+        except Exception:
+            pass
+    return False
+
+
 class StartupSplash:
     """Tiny native bootstrap window so a GUI launch never looks like a no-op."""
 
@@ -185,7 +199,13 @@ class StartupSplash:
             self.status = None
 
 
-def run_server(app: Any, port: int, name: str, errors: queue.Queue[tuple[str, BaseException]]) -> None:
+def run_server(
+    app: Any,
+    port: int,
+    name: str,
+    errors: queue.Queue[tuple[str, BaseException]],
+    servers: dict[str, Any] | None = None,
+) -> None:
     try:
         import uvicorn
 
@@ -198,10 +218,20 @@ def run_server(app: Any, port: int, name: str, errors: queue.Queue[tuple[str, Ba
             log_config=None,
         )
         server = uvicorn.Server(config)
+        if servers is not None:
+            servers[name] = server
         server.run()
     except BaseException as exc:
         logging.exception("%s server crashed", name)
         errors.put((name, exc))
+
+
+def stop_servers(servers: dict[str, Any]) -> None:
+    for server in list(servers.values()):
+        try:
+            server.should_exit = True
+        except Exception:
+            logging.exception("Could not stop server")
 
 
 def wait_for_gateway(
@@ -238,6 +268,90 @@ def open_app_browser() -> bool:
         return False
 
 
+class DesktopTray:
+    def __init__(self, *, servers: dict[str, Any]) -> None:
+        self.servers = servers
+        self.icon: Any | None = None
+        self.update_client = UpdateClient(feed_url=UPDATE_FEED_URL, release_page=UPDATE_RELEASE_PAGE)
+
+    @staticmethod
+    def _image() -> Any:
+        from PIL import Image, ImageDraw
+
+        image = Image.new("RGBA", (64, 64), (10, 15, 27, 255))
+        draw = ImageDraw.Draw(image)
+        draw.rounded_rectangle((6, 6, 58, 58), radius=14, fill=(112, 126, 255, 255))
+        draw.rectangle((16, 20, 48, 44), outline=(255, 255, 255, 255), width=3)
+        draw.line((16, 21, 32, 34, 48, 21), fill=(255, 255, 255, 255), width=3)
+        return image
+
+    def open_ui(self, *_: Any) -> None:
+        open_app_browser()
+
+    def check_updates(self, *_: Any) -> None:
+        threading.Thread(target=self._check_updates_worker, daemon=True, name="mail-agent-update-check").start()
+
+    def _check_updates_worker(self) -> None:
+        info = self.update_client.check(APP_VERSION)
+        if info.error:
+            logging.warning("Update feed unavailable: %s", info.error)
+            if show_confirm_dialog(
+                "Der automatische Update-Kanal ist momentan nicht erreichbar.\n\n"
+                "Soll die MAIL-AGENT Download-Seite im Browser geöffnet werden?",
+                title="MAIL-AGENT – Update",
+            ):
+                webbrowser.open(info.release_page)
+            return
+        if not info.available:
+            show_info_dialog(f"MAIL-AGENT {APP_VERSION} ist aktuell.")
+            return
+        if not show_confirm_dialog(
+            f"MAIL-AGENT {info.latest_version} ist verfügbar.\n\nJetzt installieren?",
+            title="MAIL-AGENT – Update verfügbar",
+        ):
+            return
+        try:
+            installer = self.update_client.download(info)
+            logging.info("Launching update installer %s", installer)
+            subprocess.Popen(
+                [str(installer), "/SILENT", "/CLOSEAPPLICATIONS", "/RESTARTAPPLICATIONS"],
+                close_fds=True,
+            )
+            self.quit()
+        except Exception as exc:
+            logging.exception("Update installation failed")
+            show_error_dialog("Update konnte nicht installiert werden.", details=str(exc))
+
+    def quit(self, *_: Any) -> None:
+        stop_servers(self.servers)
+        if self.icon is not None:
+            try:
+                self.icon.stop()
+            except Exception:
+                logging.exception("Could not stop tray icon")
+
+    def run(self) -> bool:
+        if platform.system() != "Windows":
+            return False
+        try:
+            import pystray
+
+            menu = pystray.Menu(
+                pystray.MenuItem("MAIL-AGENT öffnen", self.open_ui, default=True),
+                pystray.MenuItem("Status: Aktiv", None, enabled=False),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Nach Updates suchen", self.check_updates),
+                pystray.Menu.SEPARATOR,
+                pystray.MenuItem("Beenden", self.quit),
+            )
+            self.icon = pystray.Icon("MAIL-AGENT", self._image(), "MAIL-AGENT", menu)
+            self.icon.run()
+            return True
+        except Exception:
+            logging.exception("Tray could not be started")
+            return False
+
+
 def _run(args: argparse.Namespace) -> int:
     data_dir = (args.data_dir or user_data_dir()).resolve()
     configure_environment(data_dir)
@@ -248,7 +362,6 @@ def _run(args: argparse.Namespace) -> int:
         if splash:
             splash.set_status("Komponenten werden geladen …")
 
-        # Imports happen after environment setup because both services resolve storage paths at import time.
         from mail_agent_registry.main import app as registry_app
         from mail_agent_gateway.main import app as gateway_app
 
@@ -265,19 +378,20 @@ def _run(args: argparse.Namespace) -> int:
             )
 
         errors: queue.Queue[tuple[str, BaseException]] = queue.Queue()
+        servers: dict[str, Any] = {}
         if splash:
             splash.set_status("Registry wird gestartet …")
 
         registry_thread = threading.Thread(
             target=run_server,
-            args=(registry_app, REGISTRY_PORT, "Registry", errors),
+            args=(registry_app, REGISTRY_PORT, "Registry", errors, servers),
             daemon=True,
             name="mail-agent-registry",
         )
         gateway_thread = threading.Thread(
             target=run_server,
-            args=(gateway_app, GATEWAY_PORT, "Gateway", errors),
-            daemon=False,
+            args=(gateway_app, GATEWAY_PORT, "Gateway", errors, servers),
+            daemon=True,
             name="mail-agent-gateway",
         )
         registry_thread.start()
@@ -297,10 +411,15 @@ def _run(args: argparse.Namespace) -> int:
         if not args.no_browser and not open_app_browser():
             show_info_dialog(f"MAIL-AGENT läuft. Öffne im Browser:\n\n{GATEWAY_URL}")
 
-        try:
-            gateway_thread.join()
-        except KeyboardInterrupt:
+        tray = DesktopTray(servers=servers)
+        if tray.run():
             return 0
+
+        try:
+            while gateway_thread.is_alive():
+                gateway_thread.join(timeout=0.5)
+        except KeyboardInterrupt:
+            stop_servers(servers)
         return 0
     except Exception as exc:
         logging.exception("MAIL-AGENT startup failed")
@@ -321,7 +440,6 @@ def main() -> int:
     try:
         return _run(args)
     except BaseException as exc:
-        # Last-resort guard for windowed/frozen builds: never disappear silently.
         data_dir = (args.data_dir or user_data_dir()).resolve()
         try:
             configure_environment(data_dir)
