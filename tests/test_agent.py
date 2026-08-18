@@ -1,5 +1,6 @@
 import asyncio
 from mail_agent_core.agent import MailAgent, MailMessageContext
+from mail_agent_core.identity import AgentIdentity
 from mail_agent_core.models import AgentProfile, AutonomyMode, UsageType
 from mail_agent_core.providers import CompletionRequest, LLMProvider, ProviderHealth
 
@@ -43,10 +44,30 @@ def test_agent_overwrites_model_controlled_scope_and_applies_policy():
         subject="Hello",
         body="Please reply",
     )
-    result = asyncio.run(agent.analyze(profile=profile, provider=FakeProvider(), model="fake", message=message))
+    identity = AgentIdentity(
+        owner_id="owner",
+        agent_id="ma_test",
+        installation_id="inst_test",
+        agent_name="Nova",
+        usage_type="work",
+        public_key="public",
+        fingerprint="f" * 64,
+        created_at="2026-01-01T00:00:00+00:00",
+    )
+    result = asyncio.run(
+        agent.analyze(
+            profile=profile,
+            provider=FakeProvider(),
+            model="fake",
+            message=message,
+            identity=identity,
+        )
+    )
     assert result.proposal.mailbox_id == "trusted-mailbox"
     assert result.proposal.message_id == "trusted-message"
     assert result.proposal.thread_id == "trusted-thread"
     assert result.policy.allowed
     assert result.policy.requires_approval
     assert result.policy.risk == "high"
+    assert "Agent-ID: ma_test" in result.proposal.body
+    assert result.proposal.metadata["agent_signature_required"] is True
