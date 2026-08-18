@@ -2,7 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
+import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
 from typing import Any
@@ -78,10 +80,10 @@ class OllamaProvider(LLMProvider):
 
 
 class CodexCliProvider(LLMProvider):
-    """Adapter for a locally installed Codex CLI authenticated by the user.
+    """Adapter for the official local Codex CLI authenticated by the user.
 
-    v0.1 keeps this adapter deliberately narrow. It does not read browser cookies or store ChatGPT
-    credentials. Authentication remains owned by the official Codex client.
+    MAIL-AGENT never reads ChatGPT browser cookies or stores a ChatGPT password. Authentication
+    remains owned by the official Codex client.
     """
 
     name = "codex"
@@ -107,8 +109,22 @@ class CodexCliProvider(LLMProvider):
             return ProviderHealth(False, f"Codex check failed: {exc}")
 
     async def list_models(self) -> list[str]:
-        # The installed Codex client owns model availability. The UI treats "default" as client-managed.
+        # The official client owns the actual model availability and subscription limits.
         return ["default"]
+
+    def start_chatgpt_login(self) -> str:
+        path = shutil.which(self.binary)
+        if not path:
+            raise RuntimeError("Codex CLI ist nicht installiert")
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        subprocess.Popen(
+            [path, "--login"],
+            close_fds=True,
+            creationflags=creationflags,
+        )
+        return "Offizieller ChatGPT-Login wurde im Codex-Client gestartet"
 
     async def complete(self, request: CompletionRequest) -> str:
         path = shutil.which(self.binary)
@@ -126,7 +142,6 @@ class CodexCliProvider(LLMProvider):
         }
         prompt = json.dumps(envelope, ensure_ascii=False)
 
-        # `codex exec` is intentionally isolated from the repository and asked for a plain final answer.
         proc = await asyncio.create_subprocess_exec(
             path,
             "exec",
