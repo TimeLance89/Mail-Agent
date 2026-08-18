@@ -1,0 +1,25 @@
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.venv/
+*.egg-info/
+
+# Node
+node_modules/
+dist/
+.vite/
+
+# Runtime secrets / state
+.env
+*.pem
+*.key
+*.db
+runtime/
+
+# OS / IDE
+.DS_Store
+.vscode/
+.idea/
+
+*.tsbuildinfo

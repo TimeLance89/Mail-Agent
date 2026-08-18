@@ -1,0 +1,56 @@
+import pytest
+
+from mail_agent_core.models import (
+    AgentProfile,
+    AutonomyMode,
+    MailActionProposal,
+    MailActionType,
+    UsageType,
+)
+from mail_agent_core.policy import PolicyEngine
+
+
+@pytest.fixture
+def engine() -> PolicyEngine:
+    return PolicyEngine()
+
+
+def profile(mode: AutonomyMode, usage: UsageType = UsageType.PRIVATE) -> AgentProfile:
+    return AgentProfile(
+        owner_id="owner",
+        agent_name="Nova",
+        usage_type=usage,
+        autonomy_mode=mode,
+    )
+
+
+def proposal(action: MailActionType) -> MailActionProposal:
+    return MailActionProposal(action=action, mailbox_id="mailbox-1")
+
+
+def test_observer_can_read_but_not_draft(engine: PolicyEngine):
+    assert engine.evaluate(profile(AutonomyMode.OBSERVER), proposal(MailActionType.READ)).allowed
+    decision = engine.evaluate(profile(AutonomyMode.OBSERVER), proposal(MailActionType.CREATE_DRAFT))
+    assert not decision.allowed
+
+
+def test_copilot_requires_approval_to_send(engine: PolicyEngine):
+    decision = engine.evaluate(profile(AutonomyMode.COPILOT), proposal(MailActionType.SEND_REPLY))
+    assert decision.allowed
+    assert decision.requires_approval
+    assert decision.risk == "high"
+
+
+def test_autonomous_still_requires_approval_for_high_impact_v01(engine: PolicyEngine):
+    decision = engine.evaluate(profile(AutonomyMode.AUTONOMOUS), proposal(MailActionType.DELETE))
+    assert decision.allowed
+    assert decision.requires_approval
+
+
+def test_work_mutation_is_more_conservative(engine: PolicyEngine):
+    decision = engine.evaluate(
+        profile(AutonomyMode.COPILOT, UsageType.WORK),
+        proposal(MailActionType.ARCHIVE),
+    )
+    assert decision.allowed
+    assert decision.requires_approval

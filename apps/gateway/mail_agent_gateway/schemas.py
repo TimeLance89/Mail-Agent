@@ -1,0 +1,45 @@
+from __future__ import annotations
+
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from mail_agent_core.agent import MailMessageContext
+from mail_agent_core.models import AgentProfile
+
+
+class IdentitySetupRequest(BaseModel):
+    owner_id: str = Field(min_length=1, max_length=200)
+    agent_name: str = Field(min_length=1, max_length=80)
+    usage_type: Literal["private", "work", "business", "custom"]
+
+
+class RegistrationResponse(BaseModel):
+    agent_id: str
+    installation_id: str
+    fingerprint: str
+    registered: bool
+
+
+class ProviderProbeRequest(BaseModel):
+    provider: Literal["ollama", "codex"]
+
+
+class OnboardingCompleteRequest(BaseModel):
+    profile: AgentProfile
+    provider: Literal["ollama", "codex"]
+    model: str
+
+
+class MailboxProbeRequest(BaseModel):
+    email_address: str = Field(min_length=3, max_length=320)
+    username: str = Field(min_length=1, max_length=320)
+    password: str = Field(min_length=1, max_length=2048)
+    imap_host: str = Field(min_length=1, max_length=255)
+    imap_port: int = Field(default=993, ge=1, le=65535)
+    smtp_host: str = Field(min_length=1, max_length=255)
+    smtp_port: int = Field(default=465, ge=1, le=65535)
+
+
+class AgentAnalyzeRequest(BaseModel):
+    message: MailMessageContext

@@ -1,0 +1,43 @@
+[build-system]
+requires = ["setuptools>=75"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "mail-agent"
+version = "0.1.0"
+description = "Local-first AI agent specialized exclusively for email workflows"
+requires-python = ">=3.12"
+dependencies = [
+  "cryptography>=44.0.0",
+  "fastapi>=0.115.0",
+  "httpx>=0.28.0",
+  "pydantic>=2.10.0",
+  "uvicorn[standard]>=0.34.0",
+]
+
+[project.optional-dependencies]
+dev = [
+  "pytest>=8.3.0",
+  "pytest-asyncio>=0.25.0",
+]
+
+[tool.pytest.ini_options]
+pythonpath = [
+  "apps/gateway",
+  "apps/registry",
+  "packages/agent_core",
+]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py312"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]
+
+[tool.setuptools.packages.find]
+where = ["apps/gateway", "apps/registry", "packages/agent_core", "connectors/imap"]
+include = ["mail_agent_*"]
+

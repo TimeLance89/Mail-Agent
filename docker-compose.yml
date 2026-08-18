@@ -1,0 +1,32 @@
+services:
+  registry:
+    image: python:3.12-slim
+    working_dir: /app
+    command: sh -c "pip install -e . && uvicorn mail_agent_registry.main:app --host 0.0.0.0 --port 8770"
+    volumes:
+      - .:/app
+      - registry-data:/app/runtime/registry
+    environment:
+      MAIL_AGENT_REGISTRY_DB: /app/runtime/registry/registry.db
+    ports:
+      - "8770:8770"
+
+  gateway:
+    image: python:3.12-slim
+    working_dir: /app
+    command: sh -c "pip install -e . && uvicorn mail_agent_gateway.main:app --host 0.0.0.0 --port 8765"
+    volumes:
+      - .:/app
+      - gateway-data:/app/runtime/gateway
+    environment:
+      MAIL_AGENT_REGISTRY_URL: http://registry:8770
+      MAIL_AGENT_DATA_DIR: /app/runtime/gateway
+      OLLAMA_BASE_URL: http://host.docker.internal:11434
+    ports:
+      - "8765:8765"
+    depends_on:
+      - registry
+
+volumes:
+  gateway-data:
+  registry-data:
