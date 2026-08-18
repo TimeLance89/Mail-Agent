@@ -73,6 +73,7 @@ async def create_and_register_identity(body: IdentitySetupRequest) -> Registrati
     try:
         result = await registry.register(identity)
     except Exception as exc:
+        # Registration is mandatory: onboarding cannot silently continue offline.
         raise HTTPException(status_code=503, detail=f"Agent registry unavailable: {exc}") from exc
 
     audit_log.append(
@@ -104,6 +105,7 @@ async def mailbox_probe(body: MailboxProbeRequest) -> dict:
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Mailbox connection failed: {exc}") from exc
 
+    # Never persist the password from the probe request. Secret-vault storage is a later module.
     state = state_store.read()
     state["mailbox"] = {
         "email_address": body.email_address,

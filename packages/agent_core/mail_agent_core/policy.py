@@ -66,6 +66,7 @@ class PolicyEngine:
             )
 
         if action in self._HIGH_IMPACT:
+            # v0.1 intentionally keeps all high-impact actions human-approved.
             return PolicyDecision(
                 allowed=True,
                 requires_approval=True,

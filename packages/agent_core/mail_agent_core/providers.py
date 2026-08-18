@@ -107,6 +107,7 @@ class CodexCliProvider(LLMProvider):
             return ProviderHealth(False, f"Codex check failed: {exc}")
 
     async def list_models(self) -> list[str]:
+        # The installed Codex client owns model availability. The UI treats "default" as client-managed.
         return ["default"]
 
     async def complete(self, request: CompletionRequest) -> str:
@@ -125,6 +126,7 @@ class CodexCliProvider(LLMProvider):
         }
         prompt = json.dumps(envelope, ensure_ascii=False)
 
+        # `codex exec` is intentionally isolated from the repository and asked for a plain final answer.
         proc = await asyncio.create_subprocess_exec(
             path,
             "exec",

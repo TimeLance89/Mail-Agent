@@ -56,6 +56,8 @@ class MailAgent:
             )
         )
         proposal = self._parse_proposal(result)
+
+        # Scope fields are authoritative gateway data, never model-controlled.
         proposal.mailbox_id = message.mailbox_id
         proposal.message_id = message.message_id
         proposal.thread_id = message.thread_id

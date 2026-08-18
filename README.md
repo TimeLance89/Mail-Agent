@@ -30,7 +30,7 @@ fingerprint, and owner/installation metadata are registered.
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate  # Windows: .venv\Scripts\activate
+source .venv/bin/activate  # Windows: .venv\\Scripts\\activate
 pip install -e '.[dev]'
 
 uvicorn mail_agent_registry.main:app --app-dir apps/registry --port 8770 --reload
