@@ -3,7 +3,7 @@ from __future__ import annotations
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class UsageType(StrEnum):
@@ -44,6 +44,34 @@ class AgentProfile(BaseModel):
     use_humor: bool = False
     salutation_style: str = "adaptive"
     email_signature: str = ""
+
+
+class AgentBehaviorSettings(BaseModel):
+    enabled: bool = True
+    auto_analyze_new_mail: bool = True
+    auto_create_drafts: bool = True
+    auto_mark_read: bool = False
+    auto_archive_low_priority: bool = False
+    minimum_confidence: float = Field(default=0.72, ge=0.0, le=1.0)
+    max_messages_per_cycle: int = Field(default=20, ge=1, le=200)
+    active_days: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4, 5, 6])
+    active_from: str = Field(default="00:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    active_until: str = Field(default="23:59", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
+    vip_senders: list[str] = Field(default_factory=list)
+    never_auto_act_senders: list[str] = Field(default_factory=list)
+
+    @field_validator("active_days")
+    @classmethod
+    def validate_days(cls, value: list[int]) -> list[int]:
+        normalized = sorted(set(value))
+        if not normalized or any(day < 0 or day > 6 for day in normalized):
+            raise ValueError("active_days must contain weekdays 0 through 6")
+        return normalized
+
+    @field_validator("vip_senders", "never_auto_act_senders")
+    @classmethod
+    def normalize_senders(cls, value: list[str]) -> list[str]:
+        return sorted({item.strip().lower() for item in value if item.strip()})
 
 
 class MailActionProposal(BaseModel):
