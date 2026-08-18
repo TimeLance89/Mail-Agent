@@ -28,6 +28,25 @@ class PolicyEngine:
     def evaluate(self, profile: AgentProfile, proposal: MailActionProposal) -> PolicyDecision:
         action = proposal.action
 
+        if action in {
+            MailActionType.CREATE_DRAFT,
+            MailActionType.SEND_REPLY,
+            MailActionType.FORWARD,
+        }:
+            if (
+                proposal.metadata.get("agent_signature_required") is not True
+                or not proposal.metadata.get("agent_id")
+                or not proposal.metadata.get("agent_fingerprint")
+                or proposal.metadata.get("agent_signature_algorithm") != "ed25519"
+                or not proposal.metadata.get("agent_message_signature")
+            ):
+                return PolicyDecision(
+                    allowed=False,
+                    requires_approval=False,
+                    risk="high",
+                    reason="Outbound agent mail without mandatory signed Agent-ID is forbidden",
+                )
+
         if action in self._READ_ONLY:
             return PolicyDecision(allowed=True, requires_approval=False, risk="low", reason="Read-only action")
 
@@ -66,12 +85,11 @@ class PolicyEngine:
             )
 
         if action in self._HIGH_IMPACT:
-            # v0.2 intentionally keeps all high-impact actions human-approved.
             return PolicyDecision(
                 allowed=True,
                 requires_approval=True,
                 risk="high",
-                reason="Sending, forwarding, and deletion require approval in v0.2",
+                reason="Sending, forwarding, and deletion require human approval",
             )
 
         return PolicyDecision(allowed=False, requires_approval=False, risk="high", reason="Unknown action")

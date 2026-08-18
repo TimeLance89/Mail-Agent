@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import shutil
+import subprocess
 from abc import ABC, abstractmethod
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 import httpx
@@ -78,10 +81,10 @@ class OllamaProvider(LLMProvider):
 
 
 class CodexCliProvider(LLMProvider):
-    """Adapter for a locally installed Codex CLI authenticated by the user.
+    """Adapter for the official local Codex CLI authenticated by the user.
 
-    v0.1 keeps this adapter deliberately narrow. It does not read browser cookies or store ChatGPT
-    credentials. Authentication remains owned by the official Codex client.
+    MAIL-AGENT never reads ChatGPT browser cookies or stores a ChatGPT password. Authentication
+    remains owned by the official Codex client.
     """
 
     name = "codex"
@@ -89,14 +92,24 @@ class CodexCliProvider(LLMProvider):
     def __init__(self, binary: str = "codex"):
         self.binary = binary
 
-    async def health(self) -> ProviderHealth:
+    def _command(self, *args: str, platform_name: str | None = None) -> list[str]:
         path = shutil.which(self.binary)
         if not path:
-            return ProviderHealth(False, "Codex CLI not found in PATH")
+            raise RuntimeError("Codex CLI ist nicht installiert")
+        platform_name = platform_name or os.name
+        if platform_name == "nt" and Path(path).suffix.lower() in {".cmd", ".bat"}:
+            command_line = subprocess.list2cmdline([path, *args])
+            return [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/s", "/c", command_line]
+        return [path, *args]
+
+    async def health(self) -> ProviderHealth:
+        try:
+            command = self._command("--version")
+        except RuntimeError as exc:
+            return ProviderHealth(False, str(exc))
         try:
             proc = await asyncio.create_subprocess_exec(
-                path,
-                "--version",
+                *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
             )
@@ -107,14 +120,23 @@ class CodexCliProvider(LLMProvider):
             return ProviderHealth(False, f"Codex check failed: {exc}")
 
     async def list_models(self) -> list[str]:
-        # The installed Codex client owns model availability. The UI treats "default" as client-managed.
+        # The official client owns actual model availability and subscription limits. `default`
+        # delegates model choice to Codex; Settings may also persist an explicit CLI model id.
         return ["default"]
 
-    async def complete(self, request: CompletionRequest) -> str:
-        path = shutil.which(self.binary)
-        if not path:
-            raise RuntimeError("Codex CLI not installed")
+    def start_chatgpt_login(self) -> str:
+        command = self._command("--login")
+        creationflags = 0
+        if os.name == "nt":
+            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
+        subprocess.Popen(
+            command,
+            close_fds=True,
+            creationflags=creationflags,
+        )
+        return "Offizieller ChatGPT-Login wurde im Codex-Client gestartet"
 
+    async def complete(self, request: CompletionRequest) -> str:
         envelope = {
             "system": request.system,
             "task": request.user,
@@ -125,13 +147,14 @@ class CodexCliProvider(LLMProvider):
             ],
         }
         prompt = json.dumps(envelope, ensure_ascii=False)
+        args = ["exec", "--skip-git-repo-check"]
+        if request.model and request.model != "default":
+            args.extend(["-m", request.model])
+        args.append(prompt)
+        command = self._command(*args)
 
-        # `codex exec` is intentionally isolated from the repository and asked for a plain final answer.
         proc = await asyncio.create_subprocess_exec(
-            path,
-            "exec",
-            "--skip-git-repo-check",
-            prompt,
+            *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )

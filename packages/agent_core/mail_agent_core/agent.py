@@ -1,12 +1,15 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 
 from pydantic import BaseModel, Field
 
+from .identity import AgentIdentity
 from .models import AgentProfile, MailActionProposal, PolicyDecision
 from .policy import PolicyEngine
 from .providers import CompletionRequest, LLMProvider
+from .signature import stamp_outgoing_proposal
 
 
 class MailMessageContext(BaseModel):
@@ -35,6 +38,8 @@ class MailAgent:
         provider: LLMProvider,
         model: str,
         message: MailMessageContext,
+        identity: AgentIdentity,
+        sign_payload: Callable[[bytes], str],
     ) -> AgentAnalysis:
         system = self._system_prompt(profile)
         user = json.dumps(
@@ -57,10 +62,16 @@ class MailAgent:
         )
         proposal = self._parse_proposal(result)
 
-        # Scope fields are authoritative gateway data, never model-controlled.
+        # Scope and identity fields are authoritative gateway data, never model-controlled.
         proposal.mailbox_id = message.mailbox_id
         proposal.message_id = message.message_id
         proposal.thread_id = message.thread_id
+        proposal = stamp_outgoing_proposal(
+            proposal,
+            identity,
+            sign_payload=sign_payload,
+            user_signature=profile.email_signature,
+        )
         decision = self.policy_engine.evaluate(profile, proposal)
         return AgentAnalysis(proposal=proposal, policy=decision)
 
@@ -87,4 +98,7 @@ Owner usage type: {profile.usage_type.value}
 Autonomy mode: {profile.autonomy_mode.value}
 Preferred language: {profile.language}
 Tone: {profile.tone}
+For any draft, reply, or forward: never impersonate the human owner. The gateway appends an immutable,
+cryptographically signed MAIL-AGENT identity footer containing Agent-ID and Ed25519 fingerprint. Never
+remove, replace, hide, or forge that footer.
 Return JSON only."""

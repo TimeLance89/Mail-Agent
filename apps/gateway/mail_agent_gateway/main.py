@@ -17,11 +17,13 @@ from fastapi.staticfiles import StaticFiles
 
 from mail_agent_core.agent import MailAgent
 from mail_agent_core.identity import IdentityManager
+from mail_agent_core.models import AgentBehaviorSettings
 from mail_agent_core.policy import PolicyEngine
 from mail_agent_core.providers import CodexCliProvider, OllamaProvider
 from mail_agent_core.update import UpdateClient
 from mail_agent_imap import ImapMailbox, MailboxConfig, SmtpSender
 
+from .agent_runtime import AgentRuntime
 from .audit import AuditLog
 from .cloud_sync import GoogleGmailSyncService
 from .key_store import create_master_key_store
@@ -31,6 +33,10 @@ from .oauth_runtime import current_google_access_token
 from .registry_client import RegistryClient
 from .schemas import (
     AgentAnalyzeRequest,
+    AgentRunRequest,
+    BehaviorSettingsRequest,
+    LLMSettingsRequest,
+    ProfileSettingsRequest,
     ApprovalDecisionRequest,
     IdentitySetupRequest,
     MailboxProbeRequest,
@@ -68,6 +74,14 @@ providers = {
     "ollama": OllamaProvider(settings.ollama_base_url),
     "codex": CodexCliProvider(settings.codex_binary),
 }
+agent_runtime = AgentRuntime(
+    mail_agent=mail_agent,
+    identity_manager=identity_manager,
+    mail_store=mail_store,
+    state_store=state_store,
+    providers=providers,
+    audit_log=audit_log,
+)
 _sync_stop = asyncio.Event()
 
 
@@ -133,6 +147,20 @@ async def _sync_mailbox(mailbox: dict, *, limit: int = 100) -> dict:
         else:
             result = await sync_service.sync(_runtime_mailbox(mailbox_id), limit=limit)
         audit_log.append("mailbox_synced", details=result)
+        state = state_store.read()
+        if state.get("onboarding_completed") and state.get("configuration"):
+            try:
+                result["agent"] = await agent_runtime.run_mailbox(mailbox_id)
+            except Exception as agent_exc:
+                audit_log.append(
+                    "agent_cycle_failed",
+                    details={"mailbox_id": mailbox_id, "error": str(agent_exc)},
+                )
+                result["agent"] = {
+                    "mailbox_id": mailbox_id,
+                    "processed": 0,
+                    "error": str(agent_exc),
+                }
         return result
     except Exception as exc:
         mail_store.record_sync(
@@ -181,7 +209,7 @@ async def lifespan(_: FastAPI):
                 await task
 
 
-APP_VERSION = "0.3.0"
+APP_VERSION = "0.4.0"
 update_client = UpdateClient(
     feed_url=settings.update_feed_url,
     release_page=settings.update_release_page,
@@ -518,6 +546,7 @@ async def complete_onboarding(body: OnboardingCompleteRequest) -> dict:
         "profile": body.profile.model_dump(mode="json"),
         "provider": body.provider,
         "model": body.model,
+        "behavior": AgentBehaviorSettings().model_dump(mode="json"),
     }
     state_store.write(state)
     audit_log.append(
@@ -535,6 +564,134 @@ async def list_providers() -> dict:
         result[name] = {"available": health_result.available, "detail": health_result.detail}
     return result
 
+
+
+
+def _configuration_or_409() -> tuple[dict, dict]:
+    state = state_store.read()
+    config = state.get("configuration")
+    if not state.get("onboarding_completed") or not isinstance(config, dict):
+        raise HTTPException(status_code=409, detail="Onboarding is not complete")
+    return state, config
+
+
+async def _settings_payload() -> dict:
+    _state, config = _configuration_or_409()
+    identity = asdict(identity_manager.load())
+    catalog: dict[str, dict] = {}
+    for name, provider in providers.items():
+        health_result = await provider.health()
+        models: list[str] = []
+        if health_result.available:
+            try:
+                models = await provider.list_models()
+            except Exception:
+                models = []
+        catalog[name] = {
+            "available": health_result.available,
+            "detail": health_result.detail,
+            "models": models,
+        }
+    behavior = AgentBehaviorSettings.model_validate(config.get("behavior") or {})
+    return {
+        "identity": identity,
+        "provider": config["provider"],
+        "model": config["model"],
+        "profile": config["profile"],
+        "behavior": behavior.model_dump(mode="json"),
+        "providers": catalog,
+        "invariants": {
+            "agent_identity_required": True,
+            "agent_signature_required": True,
+            "agent_signature_removable": False,
+            "send_requires_approval": True,
+        },
+    }
+
+
+@app.get("/v1/settings")
+async def get_runtime_settings() -> dict:
+    return await _settings_payload()
+
+
+@app.put("/v1/settings/llm")
+async def update_llm_settings(body: LLMSettingsRequest) -> dict:
+    state, config = _configuration_or_409()
+    provider = providers[body.provider]
+    health_result = await provider.health()
+    if not health_result.available:
+        raise HTTPException(status_code=409, detail=health_result.detail)
+    config["provider"] = body.provider
+    config["model"] = body.model
+    state["configuration"] = config
+    state_store.write(state)
+    audit_log.append(
+        "llm_settings_changed",
+        details={"provider": body.provider, "model": body.model},
+    )
+    return await _settings_payload()
+
+
+@app.put("/v1/settings/behavior")
+async def update_behavior_settings(body: BehaviorSettingsRequest) -> dict:
+    state, config = _configuration_or_409()
+    config["behavior"] = body.behavior.model_dump(mode="json")
+    state["configuration"] = config
+    state_store.write(state)
+    audit_log.append("agent_behavior_changed", details=config["behavior"])
+    return await _settings_payload()
+
+
+@app.put("/v1/settings/profile")
+async def update_profile_settings(body: ProfileSettingsRequest) -> dict:
+    state, config = _configuration_or_409()
+    identity = identity_manager.load()
+    if body.profile.owner_id != identity.owner_id:
+        raise HTTPException(status_code=409, detail="Profile owner does not match Agent-ID owner")
+    profile = body.profile.model_copy(update={"agent_name": identity.agent_name})
+    config["profile"] = profile.model_dump(mode="json")
+    state["configuration"] = config
+    state_store.write(state)
+    audit_log.append(
+        "agent_profile_changed",
+        details={"agent_id": identity.agent_id, "autonomy": profile.autonomy_mode.value},
+    )
+    return await _settings_payload()
+
+
+@app.post("/v1/providers/codex/login")
+async def start_codex_chatgpt_login() -> dict:
+    provider = providers["codex"]
+    if not isinstance(provider, CodexCliProvider):
+        raise HTTPException(status_code=500, detail="Codex provider is unavailable")
+    try:
+        detail = provider.start_chatgpt_login()
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit_log.append("chatgpt_login_started", details={"provider": "codex"})
+    return {"started": True, "detail": detail}
+
+
+@app.post("/v1/agent/run")
+async def run_agent_cycle(body: AgentRunRequest) -> dict:
+    _configuration_or_409()
+    mailbox_ids = (
+        [body.mailbox_id]
+        if body.mailbox_id
+        else [item["mailbox_id"] for item in _configured_mailboxes()]
+    )
+    if not mailbox_ids:
+        raise HTTPException(status_code=409, detail="No mailbox is configured")
+    results = []
+    for mailbox_id in mailbox_ids:
+        try:
+            _mailbox_by_id(mailbox_id)
+            results.append(await agent_runtime.run_mailbox(mailbox_id, force=body.force))
+        except KeyError as exc:
+            raise HTTPException(status_code=404, detail=f"Unknown mailbox: {mailbox_id}") from exc
+        except RuntimeError as exc:
+            raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {"results": results}
 
 @app.get("/v1/audit")
 async def recent_audit(limit: int = 100) -> dict:
@@ -587,54 +744,12 @@ async def reject_action(approval_id: str, body: ApprovalDecisionRequest) -> dict
 
 @app.post("/v1/agent/analyze")
 async def analyze_mail(body: AgentAnalyzeRequest) -> dict:
-    state = state_store.read()
-    config = state.get("configuration")
-    if not state.get("onboarding_completed") or not config:
-        raise HTTPException(status_code=409, detail="Onboarding is not complete")
-    provider_name = config["provider"]
-    provider = providers.get(provider_name)
-    if provider is None:
-        raise HTTPException(status_code=409, detail="Configured provider is unavailable")
-    from mail_agent_core.models import AgentProfile
-
-    profile = AgentProfile.model_validate(config["profile"])
     try:
-        analysis = await mail_agent.analyze(
-            profile=profile,
-            provider=provider,
-            model=config["model"],
-            message=body.message,
-        )
+        return await agent_runtime.analyze_message(body.message, create_artifacts=True)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Model analysis failed: {exc}") from exc
-
-    approval = None
-    if analysis.policy.allowed and analysis.policy.requires_approval:
-        approval = mail_store.enqueue_approval(analysis.proposal, analysis.policy)
-
-    draft = None
-    if analysis.policy.allowed and analysis.proposal.body and analysis.proposal.action.value in {"create_draft", "send_reply"}:
-        draft = mail_store.create_draft(
-            analysis.proposal,
-            approval_id=approval["approval_id"] if approval else None,
-        )
-
-    audit_log.append(
-        "mail_analyzed",
-        details={
-            "mailbox_id": body.message.mailbox_id,
-            "message_id": body.message.message_id,
-            "proposed_action": analysis.proposal.action.value,
-            "risk": analysis.policy.risk,
-            "requires_approval": analysis.policy.requires_approval,
-            "approval_id": approval["approval_id"] if approval else None,
-            "draft_id": draft["draft_id"] if draft else None,
-        },
-    )
-    payload = analysis.model_dump(mode="json")
-    payload["approval"] = approval
-    payload["draft"] = draft
-    return payload
 
 
 def _oauth_result_page(success: bool, title: str, message: str) -> str:

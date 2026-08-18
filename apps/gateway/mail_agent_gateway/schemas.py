@@ -5,7 +5,7 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from mail_agent_core.agent import MailMessageContext
-from mail_agent_core.models import AgentProfile
+from mail_agent_core.models import AgentBehaviorSettings, AgentProfile
 
 
 class IdentitySetupRequest(BaseModel):
@@ -29,6 +29,24 @@ class OnboardingCompleteRequest(BaseModel):
     profile: AgentProfile
     provider: Literal["ollama", "codex"]
     model: str
+
+
+class LLMSettingsRequest(BaseModel):
+    provider: Literal["ollama", "codex"]
+    model: str = Field(min_length=1, max_length=200)
+
+
+class BehaviorSettingsRequest(BaseModel):
+    behavior: AgentBehaviorSettings
+
+
+class ProfileSettingsRequest(BaseModel):
+    profile: AgentProfile
+
+
+class AgentRunRequest(BaseModel):
+    mailbox_id: str | None = Field(default=None, max_length=128)
+    force: bool = False
 
 
 class MailboxProbeRequest(BaseModel):

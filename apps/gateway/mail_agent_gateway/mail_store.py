@@ -112,6 +112,19 @@ class MailStore:
                     ON drafts(mailbox_id, created_at DESC);
                 CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_remote
                     ON messages(mailbox_id, remote_id) WHERE remote_id IS NOT NULL;
+
+                CREATE TABLE IF NOT EXISTS agent_processing (
+                    mailbox_id TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    status TEXT NOT NULL,
+                    proposal_action TEXT,
+                    confidence REAL,
+                    processed_at TEXT NOT NULL,
+                    error TEXT,
+                    PRIMARY KEY (mailbox_id, message_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_agent_processing_time
+                    ON agent_processing(mailbox_id, processed_at DESC);
                 """
             )
             self._ensure_column(conn, "messages", "remote_id", "TEXT")
@@ -255,6 +268,50 @@ class MailStore:
             else:
                 cursor = conn.execute("DELETE FROM messages WHERE mailbox_id=?", (mailbox_id,))
             return cursor.rowcount
+
+    def is_agent_processed(self, mailbox_id: str, message_id: str) -> bool:
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM agent_processing WHERE mailbox_id=? AND message_id=?",
+                (mailbox_id, message_id),
+            ).fetchone()
+        if row is None:
+            return False
+        return row["status"] != "error"
+
+    def record_agent_processing(
+        self,
+        mailbox_id: str,
+        message_id: str,
+        *,
+        status: str,
+        proposal_action: str | None = None,
+        confidence: float | None = None,
+        error: str | None = None,
+    ) -> None:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO agent_processing (
+                    mailbox_id, message_id, status, proposal_action, confidence, processed_at, error
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(mailbox_id, message_id) DO UPDATE SET
+                    status=excluded.status,
+                    proposal_action=excluded.proposal_action,
+                    confidence=excluded.confidence,
+                    processed_at=excluded.processed_at,
+                    error=excluded.error
+                """,
+                (
+                    mailbox_id,
+                    message_id,
+                    status,
+                    proposal_action,
+                    confidence,
+                    utc_now(),
+                    error,
+                ),
+            )
 
     def enqueue_approval(
         self,
