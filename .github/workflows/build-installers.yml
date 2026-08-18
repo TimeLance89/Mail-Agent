@@ -21,7 +21,7 @@ jobs:
           python-version: '3.12'
       - name: Install build dependencies
         run: python -m pip install -e ".[dev]" pyinstaller
-      - name: Embed Google OAuth desktop client
+      - name: Embed Google OAuth desktop client override
         shell: python
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID || secrets.GOOGLE_OAUTH_CLIENT_ID }}
@@ -29,17 +29,29 @@ jobs:
           import os
           from pathlib import Path
 
-          client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
+          client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip()
           target = Path("apps/gateway/mail_agent_gateway/oauth_defaults.py")
-          target.write_text(
-              '"""Build-time OAuth defaults. Environment variables override these values."""\n\n'
-              f'GOOGLE_CLIENT_ID = {client_id!r}\n',
-              encoding="utf-8",
-          )
-          if not client_id:
-              print("::warning::GOOGLE_OAUTH_CLIENT_ID is not configured; Gmail OAuth will be disabled in this build.")
+          if client_id:
+              target.write_text(
+                  '"""Build-time OAuth defaults. Environment variables override these values."""\n\n'
+                  f'GOOGLE_CLIENT_ID = {client_id!r}\n',
+                  encoding="utf-8",
+              )
+              print("Using CI-provided Google OAuth desktop client ID.")
+          else:
+              print("Using the packaged MAIL-AGENT Google OAuth desktop client ID.")
       - name: Validate embedded OAuth defaults
-        run: python -m py_compile apps/gateway/mail_agent_gateway/oauth_defaults.py
+        shell: python
+        run: |
+          import py_compile
+          import runpy
+
+          path = "apps/gateway/mail_agent_gateway/oauth_defaults.py"
+          py_compile.compile(path, doraise=True)
+          client_id = runpy.run_path(path).get("GOOGLE_CLIENT_ID", "")
+          if not client_id.endswith(".apps.googleusercontent.com"):
+              raise SystemExit("A valid Google OAuth desktop client ID is required for release builds")
+          print("Google OAuth desktop client configured.")
       - name: Run tests
         run: python -m pytest -q
       - name: Build standalone app
@@ -125,19 +137,38 @@ jobs:
         with:
           python-version: '3.12'
       - run: python -m pip install -e ".[dev]" pyinstaller
-      - name: Embed Google OAuth desktop client
+      - name: Embed Google OAuth desktop client override
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID || secrets.GOOGLE_OAUTH_CLIENT_ID }}
         run: |
           python - <<'PY'
           import os
           from pathlib import Path
-          client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "")
-          Path("apps/gateway/mail_agent_gateway/oauth_defaults.py").write_text(
-              '"""Build-time OAuth defaults. Environment variables override these values."""\n\n'
-              f'GOOGLE_CLIENT_ID = {client_id!r}\n',
-              encoding="utf-8",
-          )
+
+          client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip()
+          target = Path("apps/gateway/mail_agent_gateway/oauth_defaults.py")
+          if client_id:
+              target.write_text(
+                  '"""Build-time OAuth defaults. Environment variables override these values."""\n\n'
+                  f'GOOGLE_CLIENT_ID = {client_id!r}\n',
+                  encoding="utf-8",
+              )
+              print("Using CI-provided Google OAuth desktop client ID.")
+          else:
+              print("Using the packaged MAIL-AGENT Google OAuth desktop client ID.")
+          PY
+      - name: Validate embedded OAuth defaults
+        run: |
+          python - <<'PY'
+          import py_compile
+          import runpy
+
+          path = "apps/gateway/mail_agent_gateway/oauth_defaults.py"
+          py_compile.compile(path, doraise=True)
+          client_id = runpy.run_path(path).get("GOOGLE_CLIENT_ID", "")
+          if not client_id.endswith(".apps.googleusercontent.com"):
+              raise SystemExit("A valid Google OAuth desktop client ID is required for release builds")
+          print("Google OAuth desktop client configured.")
           PY
       - name: Run tests
         run: python -m pytest -q
