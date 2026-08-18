@@ -109,7 +109,8 @@ class CodexCliProvider(LLMProvider):
             return ProviderHealth(False, f"Codex check failed: {exc}")
 
     async def list_models(self) -> list[str]:
-        # The official client owns the actual model availability and subscription limits.
+        # The official client owns actual model availability and subscription limits. `default`
+        # delegates model choice to Codex; Settings may also persist an explicit CLI model id.
         return ["default"]
 
     def start_chatgpt_login(self) -> str:
@@ -141,12 +142,13 @@ class CodexCliProvider(LLMProvider):
             ],
         }
         prompt = json.dumps(envelope, ensure_ascii=False)
+        args = [path, "exec", "--skip-git-repo-check"]
+        if request.model and request.model != "default":
+            args.extend(["-m", request.model])
+        args.append(prompt)
 
         proc = await asyncio.create_subprocess_exec(
-            path,
-            "exec",
-            "--skip-git-repo-check",
-            prompt,
+            *args,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
         )
