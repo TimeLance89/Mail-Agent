@@ -45,3 +45,27 @@ def test_wait_for_gateway_surfaces_server_crash(monkeypatch):
     assert reason is not None
     assert "Gateway" in reason
     assert "boom" in reason
+
+
+def test_run_server_disables_uvicorn_log_config(monkeypatch):
+    import mail_agent_launcher.main as launcher
+
+    captured = {}
+
+    class FakeConfig:
+        def __init__(self, app, **kwargs):
+            captured.update(kwargs)
+
+    class FakeServer:
+        def __init__(self, config):
+            self.config = config
+
+        def run(self):
+            return None
+
+    monkeypatch.setattr("uvicorn.Config", FakeConfig)
+    monkeypatch.setattr("uvicorn.Server", FakeServer)
+    errors: queue.Queue[tuple[str, BaseException]] = queue.Queue()
+    launcher.run_server(object(), 9999, "Test", errors)
+    assert errors.empty()
+    assert captured["log_config"] is None
