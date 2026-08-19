@@ -173,6 +173,17 @@ async def _sync_mailbox(mailbox: dict, *, limit: int = 100) -> dict:
         else:
             result = await sync_service.sync(_runtime_mailbox(mailbox_id), limit=limit)
         audit_log.append("mailbox_synced", details=result)
+        synced_count = next(
+            (int(result.get(key) or 0) for key in ("imported", "inserted", "new_messages", "fetched") if result.get(key) is not None),
+            None,
+        )
+        agent_runtime.activity.record_sync(
+            mailbox_id=mailbox_id,
+            status="completed",
+            detail="Postfach erfolgreich synchronisiert.",
+            connector=str(mailbox.get("connector") or "imap"),
+            messages_synced=synced_count,
+        )
         state = state_store.read()
         if state.get("onboarding_completed") and state.get("configuration"):
             try:
@@ -189,6 +200,12 @@ async def _sync_mailbox(mailbox: dict, *, limit: int = 100) -> dict:
                 }
         return result
     except Exception as exc:
+        agent_runtime.activity.record_sync(
+            mailbox_id=mailbox_id,
+            status="failed",
+            detail=f"Synchronisierung fehlgeschlagen: {exc}",
+            connector=str(mailbox.get("connector") or "imap"),
+        )
         mail_store.record_sync(
             mailbox_id,
             last_uid=mail_store.get_last_uid(mailbox_id),
@@ -235,7 +252,7 @@ async def lifespan(_: FastAPI):
                 await task
 
 
-APP_VERSION = "0.8.0"
+APP_VERSION = "0.9.0"
 update_client = UpdateClient(
     feed_url=settings.update_feed_url,
     release_page=settings.update_release_page,
@@ -718,6 +735,8 @@ def _brain_payload() -> dict:
         "memory": snapshot.memory,
         "learning_candidates": agent_runtime.brain.learning_candidates(),
         "recent_activity": agent_runtime.brain.recent_activity(30),
+        "activity": agent_runtime.activity.recent_traces(25),
+        "activity_summary": agent_runtime.activity.summary(),
         "mailboxes": mailboxes,
         "pending_total": sum(int(item.get("pending") or 0) for item in mailboxes),
     }
@@ -726,6 +745,15 @@ def _brain_payload() -> dict:
 @app.get("/v1/agent/brain")
 async def get_agent_brain() -> dict:
     return _brain_payload()
+
+
+@app.get("/v1/agent/activity")
+async def get_agent_activity(limit: int = 50, mailbox_id: str | None = None) -> dict:
+    _configuration_or_409()
+    return {
+        "traces": agent_runtime.activity.recent_traces(limit, mailbox_id=mailbox_id),
+        "summary": agent_runtime.activity.summary(mailbox_id=mailbox_id),
+    }
 
 
 @app.put("/v1/agent/brain")
