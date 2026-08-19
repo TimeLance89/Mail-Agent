@@ -720,7 +720,7 @@ class MailStore:
         approval_id: str,
         result: dict[str, Any],
         *,
-        success_status: str = "completed",
+        success_status: str = "sent",
     ) -> dict[str, Any]:
         if success_status not in {"sent", "completed"}:
             raise ValueError("Unsupported execution success status")

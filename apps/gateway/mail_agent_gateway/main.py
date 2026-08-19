@@ -27,6 +27,7 @@ from .action_executor import MailActionExecutor
 from .agent_runtime import AgentRuntime
 from .audit import AuditLog
 from .cloud_sync import GoogleGmailSyncService
+from .draft_service import DraftService
 from .key_store import create_master_key_store
 from .mail_store import MailStore
 from .oauth_controller import OAuthController
@@ -36,6 +37,8 @@ from .schemas import (
     AgentAnalyzeRequest,
     AgentRunRequest,
     BehaviorSettingsRequest,
+    DraftSubmitRequest,
+    DraftUpdateRequest,
     LLMSettingsRequest,
     ProfileSettingsRequest,
     ApprovalDecisionRequest,
@@ -75,14 +78,6 @@ providers = {
     "ollama": OllamaProvider(settings.ollama_base_url),
     "codex": CodexCliProvider(settings.codex_binary),
 }
-agent_runtime = AgentRuntime(
-    mail_agent=mail_agent,
-    identity_manager=identity_manager,
-    mail_store=mail_store,
-    state_store=state_store,
-    providers=providers,
-    audit_log=audit_log,
-)
 _sync_stop = asyncio.Event()
 
 
@@ -135,6 +130,22 @@ action_executor = MailActionExecutor(
     mailbox_lookup=_mailbox_by_id,
     google_client_id=settings.google_client_id,
     google_client_secret=settings.google_client_secret,
+    audit_log=audit_log,
+)
+agent_runtime = AgentRuntime(
+    mail_agent=mail_agent,
+    identity_manager=identity_manager,
+    mail_store=mail_store,
+    state_store=state_store,
+    providers=providers,
+    audit_log=audit_log,
+    action_executor=action_executor,
+)
+draft_service = DraftService(
+    mail_store=mail_store,
+    identity_manager=identity_manager,
+    state_store=state_store,
+    policy_engine=policy_engine,
     audit_log=audit_log,
 )
 
@@ -221,7 +232,7 @@ async def lifespan(_: FastAPI):
                 await task
 
 
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.6.0"
 update_client = UpdateClient(
     feed_url=settings.update_feed_url,
     release_page=settings.update_release_page,
@@ -618,6 +629,9 @@ async def _settings_payload() -> dict:
             "agent_signature_removable": False,
             "send_requires_approval": True,
             "approved_send_executes_immediately": True,
+            "mailbox_mutations_policy_gated": True,
+            "draft_edits_are_resigned": True,
+            "delete_means_trash": True,
         },
     }
 
@@ -713,8 +727,46 @@ async def recent_audit(limit: int = 100) -> dict:
 
 @app.get("/v1/drafts")
 async def list_drafts(mailbox_id: str | None = None, limit: int = 100) -> dict:
-    return {"drafts": mail_store.list_drafts(mailbox_id, limit)}
+    return {
+        "drafts": [
+            draft_service.public_draft(item)
+            for item in mail_store.list_drafts(mailbox_id, limit)
+        ]
+    }
 
+
+@app.get("/v1/drafts/{draft_id}")
+async def get_draft(draft_id: str) -> dict:
+    try:
+        return draft_service.public_draft(mail_store.get_draft(draft_id))
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Draft not found") from exc
+
+
+@app.put("/v1/drafts/{draft_id}")
+async def update_draft(draft_id: str, body: DraftUpdateRequest) -> dict:
+    try:
+        return draft_service.edit(
+            draft_id,
+            subject=body.subject,
+            body=body.body,
+            recipient=body.recipient,
+            actor=body.actor,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Draft not found") from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+
+@app.post("/v1/drafts/{draft_id}/submit")
+async def submit_draft(draft_id: str, body: DraftSubmitRequest) -> dict:
+    try:
+        return draft_service.submit_for_approval(draft_id, actor=body.actor)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Draft not found") from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 @app.get("/v1/approvals")
 async def list_approvals(status: str = "pending", limit: int = 100) -> dict:
