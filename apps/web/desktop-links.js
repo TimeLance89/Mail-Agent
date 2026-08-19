@@ -1,5 +1,5 @@
 (() => {
-  const APP_VERSION = '0.13.3';
+  const APP_VERSION = '0.13.4';
   const allowed = new Set([
     'overview',
     'activity',
@@ -26,7 +26,8 @@
 
   const applyVersion = () => {
     const footer = document.querySelector('.setup-foot');
-    if (footer) footer.textContent = `MAIL-AGENT v${APP_VERSION} · Lokales Gateway`;
+    const text = `MAIL-AGENT v${APP_VERSION} · Lokales Gateway`;
+    if (footer && footer.textContent !== text) footer.textContent = text;
   };
 
   const apply = () => {
@@ -37,6 +38,6 @@
   apply();
   const observer = new MutationObserver(apply);
   const app = document.getElementById('app');
-  if (app) observer.observe(app, { childList: true, subtree: true });
+  if (app) observer.observe(app, { childList: true });
   window.setTimeout(() => observer.disconnect(), 15000);
 })();
