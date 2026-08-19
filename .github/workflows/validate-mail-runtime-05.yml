@@ -24,6 +24,16 @@ jobs:
         shell: bash
         run: |
           if [ -f tools/apply_mail_runtime_05.py ]; then
+            python - <<'PY'
+          from pathlib import Path
+          path = Path('tools/apply_mail_runtime_05.py')
+          text = path.read_text(encoding='utf-8')
+          text = text.replace(
+              're.subn(pattern, replacement, text, count=1, flags=re.DOTALL)',
+              're.subn(pattern, lambda _match: replacement, text, count=1, flags=re.DOTALL)',
+          )
+          path.write_text(text, encoding='utf-8')
+          PY
             python tools/apply_mail_runtime_05.py
           else
             echo "Integration already persisted"
