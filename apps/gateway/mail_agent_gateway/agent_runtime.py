@@ -34,7 +34,7 @@ class AgentRuntime:
         state_store: JsonStateStore,
         providers: dict[str, Any],
         audit_log: AuditLog,
-        action_executor: MailActionExecutor,
+        action_executor: MailActionExecutor | None = None,
     ):
         self.mail_agent = mail_agent
         self.identity_manager = identity_manager
@@ -145,6 +145,8 @@ class AgentRuntime:
             if analysis.policy.requires_approval:
                 approval = self.mail_store.enqueue_approval(analysis.proposal, analysis.policy)
             elif analysis.proposal.action in _REMOTE_MUTATIONS:
+                if self.action_executor is None:
+                    raise RuntimeError("Remote action executor is not configured")
                 execution = await self.action_executor.execute_direct(analysis.proposal)
             if (
                 behavior.auto_create_drafts
