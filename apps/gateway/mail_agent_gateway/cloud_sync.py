@@ -38,22 +38,7 @@ class GoogleGmailSyncService:
             payload = await client.get_raw_message(message_id)
             if "INBOX" not in payload.get("labelIds", []):
                 continue
-            parsed = parse_message(
-                mailbox_id,
-                google_uid(message_id),
-                payload["raw_bytes"],
-                seen="UNREAD" not in payload.get("labelIds", []),
-            )
-            stored.append(
-                StoredMessage(
-                    **{
-                        **parsed.__dict__,
-                        "remote_id": message_id,
-                        "remote_thread_id": payload.get("threadId"),
-                        "connector": "gmail_api",
-                    }
-                )
-            )
+            stored.append(_gmail_message(mailbox_id, message_id, payload))
             newest_history = newest_history or payload.get("historyId")
         if newest_history is None:
             newest_history = str((await client.profile()).get("historyId", "")) or None
@@ -101,22 +86,7 @@ class GoogleGmailSyncService:
             if "INBOX" not in payload.get("labelIds", []):
                 deleted_ids.add(remote_id)
                 continue
-            parsed = parse_message(
-                mailbox_id,
-                google_uid(remote_id),
-                payload["raw_bytes"],
-                seen="UNREAD" not in payload.get("labelIds", []),
-            )
-            stored.append(
-                StoredMessage(
-                    **{
-                        **parsed.__dict__,
-                        "remote_id": remote_id,
-                        "remote_thread_id": payload.get("threadId"),
-                        "connector": "gmail_api",
-                    }
-                )
-            )
+            stored.append(_gmail_message(mailbox_id, remote_id, payload))
         self.store.upsert_messages(stored)
         for remote_id in deleted_ids:
             self.store.delete_remote_message(mailbox_id, remote_id)
@@ -177,6 +147,36 @@ class MicrosoftGraphSyncService:
             "removed": removed_count,
             "cursor": "delta-link",
         }
+
+
+def _gmail_message(mailbox_id: str, remote_id: str, payload: dict) -> StoredMessage:
+    parsed = parse_message(
+        mailbox_id,
+        google_uid(remote_id),
+        payload["raw_bytes"],
+        seen="UNREAD" not in payload.get("labelIds", []),
+    )
+    remote_thread_id = str(payload.get("threadId") or "") or None
+    thread_key = (
+        hashlib.sha256(remote_thread_id.encode("utf-8", "replace")).hexdigest()[:32]
+        if remote_thread_id
+        else parsed.thread_key
+    )
+    return StoredMessage(
+        mailbox_id=parsed.mailbox_id,
+        uid=parsed.uid,
+        internet_message_id=parsed.internet_message_id,
+        thread_key=thread_key,
+        sender=parsed.sender,
+        recipients=parsed.recipients,
+        subject=parsed.subject,
+        sent_at=parsed.sent_at,
+        body_text=parsed.body_text,
+        seen=parsed.seen,
+        remote_id=remote_id,
+        remote_thread_id=remote_thread_id,
+        connector="gmail_api",
+    )
 
 
 def _graph_message(mailbox_id: str, item: dict) -> StoredMessage:
