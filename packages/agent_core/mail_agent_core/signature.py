@@ -20,7 +20,8 @@ _OUTBOUND = {
 }
 
 
-def _unsigned_content(body: str) -> str:
+def strip_agent_signature(body: str) -> str:
+    """Return only user-visible message content before the mandatory identity block."""
     return _BLOCK.sub("", body.rstrip()).rstrip()
 
 
@@ -56,7 +57,7 @@ def enforce_agent_signature(
 ) -> tuple[str, str]:
     if not body or not body.strip():
         raise ValueError("Outgoing agent mail must contain a body")
-    clean = _unsigned_content(body)
+    clean = strip_agent_signature(body)
     if user_signature.strip() and not clean.endswith(user_signature.strip()):
         clean = f"{clean}\n\n{user_signature.strip()}"
     cryptographic_signature = sign_payload(_signature_payload(clean, identity))
@@ -111,7 +112,7 @@ def assert_mandatory_agent_signature(body: str, identity: AgentIdentity) -> None
     )
     if not required:
         raise ValueError("Mandatory MAIL-AGENT identity signature is missing")
-    content = _unsigned_content(body)
+    content = strip_agent_signature(body)
     if not IdentityManager.verify(
         public_key_b64=identity.public_key,
         payload=_signature_payload(content, identity),

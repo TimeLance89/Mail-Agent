@@ -72,5 +72,16 @@ class ApprovalDecisionRequest(BaseModel):
     actor: str = Field(default="local-user", min_length=1, max_length=200)
 
 
+class DraftUpdateRequest(BaseModel):
+    subject: str = Field(default="", max_length=998)
+    body: str = Field(min_length=1, max_length=200_000)
+    recipient: str | None = Field(default=None, max_length=320)
+    actor: str = Field(default="local-user", min_length=1, max_length=200)
+
+
+class DraftSubmitRequest(BaseModel):
+    actor: str = Field(default="local-user", min_length=1, max_length=200)
+
+
 class AgentAnalyzeRequest(BaseModel):
     message: MailMessageContext

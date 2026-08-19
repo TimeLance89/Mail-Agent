@@ -12,6 +12,16 @@ from typing import Any
 from mail_agent_core.models import MailActionProposal, PolicyDecision
 
 
+_EXECUTABLE_ACTIONS = {
+    "mark_read",
+    "move",
+    "archive",
+    "delete",
+    "send_reply",
+    "forward",
+}
+
+
 def utc_now() -> str:
     return datetime.now(UTC).isoformat()
 
@@ -118,7 +128,11 @@ class MailStore:
                     source_action TEXT NOT NULL,
                     approval_id TEXT,
                     status TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    proposal_json TEXT,
+                    updated_at TEXT,
+                    revision INTEGER NOT NULL DEFAULT 1,
+                    edited_by TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_drafts_mailbox
                     ON drafts(mailbox_id, created_at DESC);
@@ -153,6 +167,10 @@ class MailStore:
             self._ensure_column(conn, "approvals", "executed_at", "TEXT")
             self._ensure_column(conn, "approvals", "execution_result_json", "TEXT")
             self._ensure_column(conn, "approvals", "execution_error", "TEXT")
+            self._ensure_column(conn, "drafts", "proposal_json", "TEXT")
+            self._ensure_column(conn, "drafts", "updated_at", "TEXT")
+            self._ensure_column(conn, "drafts", "revision", "INTEGER NOT NULL DEFAULT 1")
+            self._ensure_column(conn, "drafts", "edited_by", "TEXT")
             conn.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_remote "
                 "ON messages(mailbox_id, remote_id) WHERE remote_id IS NOT NULL"
@@ -318,6 +336,28 @@ class MailStore:
             )
             return cursor.rowcount > 0
 
+    def mark_message_seen(self, mailbox_id: str, message_id: str, *, seen: bool = True) -> bool:
+        with self._lock, self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE messages SET seen=?
+                WHERE mailbox_id=? AND (remote_id=? OR internet_message_id=? OR CAST(uid AS TEXT)=?)
+                """,
+                (1 if seen else 0, mailbox_id, message_id, message_id, message_id),
+            )
+            return cursor.rowcount > 0
+
+    def remove_message(self, mailbox_id: str, message_id: str) -> bool:
+        with self._lock, self._connect() as conn:
+            cursor = conn.execute(
+                """
+                DELETE FROM messages
+                WHERE mailbox_id=? AND (remote_id=? OR internet_message_id=? OR CAST(uid AS TEXT)=?)
+                """,
+                (mailbox_id, message_id, message_id, message_id),
+            )
+            return cursor.rowcount > 0
+
     def get_last_uid(self, mailbox_id: str) -> int:
         with self._lock, self._connect() as conn:
             row = conn.execute(
@@ -466,13 +506,15 @@ class MailStore:
         draft_id = "dr_" + uuid.uuid4().hex
         created_at = utc_now()
         status = "approval_pending" if approval_id else "draft"
+        proposal_json = proposal.model_dump_json()
         with self._lock, self._connect() as conn:
             conn.execute(
                 """
                 INSERT INTO drafts (
                     draft_id, mailbox_id, message_id, thread_id, recipient, subject,
-                    body, source_action, approval_id, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    body, source_action, approval_id, status, created_at,
+                    proposal_json, updated_at, revision
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1)
                 """,
                 (
                     draft_id,
@@ -486,21 +528,36 @@ class MailStore:
                     approval_id,
                     status,
                     created_at,
+                    proposal_json,
+                    created_at,
                 ),
             )
-        return {
-            "draft_id": draft_id,
-            "mailbox_id": proposal.mailbox_id,
-            "message_id": proposal.message_id,
-            "thread_id": proposal.thread_id,
-            "recipient": proposal.recipient,
-            "subject": proposal.subject,
-            "body": proposal.body,
-            "source_action": proposal.action.value,
-            "approval_id": approval_id,
-            "status": status,
-            "created_at": created_at,
-        }
+        return self.get_draft(draft_id)
+
+    @staticmethod
+    def _draft_row(row: sqlite3.Row) -> dict[str, Any]:
+        data = dict(row)
+        proposal_json = data.pop("proposal_json", None)
+        if proposal_json:
+            data["proposal"] = json.loads(proposal_json)
+        else:
+            data["proposal"] = {
+                "action": data["source_action"],
+                "mailbox_id": data["mailbox_id"],
+                "message_id": data["message_id"],
+                "thread_id": data["thread_id"],
+                "recipient": data["recipient"],
+                "subject": data["subject"],
+                "body": data["body"],
+            }
+        return data
+
+    def get_draft(self, draft_id: str) -> dict[str, Any]:
+        with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT * FROM drafts WHERE draft_id=?", (draft_id,)).fetchone()
+        if row is None:
+            raise KeyError(draft_id)
+        return self._draft_row(row)
 
     def list_drafts(self, mailbox_id: str | None = None, limit: int = 100) -> list[dict[str, Any]]:
         limit = max(1, min(limit, 500))
@@ -515,7 +572,70 @@ class MailStore:
                     "SELECT * FROM drafts ORDER BY created_at DESC LIMIT ?",
                     (limit,),
                 ).fetchall()
-        return [dict(row) for row in rows]
+        return [self._draft_row(row) for row in rows]
+
+    def update_draft(self, draft_id: str, proposal: MailActionProposal, *, actor: str) -> dict[str, Any]:
+        now = utc_now()
+        proposal_json = proposal.model_dump_json()
+        with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT * FROM drafts WHERE draft_id=?", (draft_id,)).fetchone()
+            if row is None:
+                raise KeyError(draft_id)
+            if row["status"] == "sent":
+                raise RuntimeError("Sent drafts cannot be edited")
+            if proposal.mailbox_id != row["mailbox_id"] or proposal.message_id != row["message_id"]:
+                raise RuntimeError("Draft scope cannot be changed")
+            if row["approval_id"]:
+                approval = conn.execute(
+                    "SELECT status, action FROM approvals WHERE approval_id=?",
+                    (row["approval_id"],),
+                ).fetchone()
+                if approval is None or approval["status"] != "pending":
+                    raise RuntimeError("Draft cannot be edited after approval was decided")
+                if proposal.action.value != approval["action"]:
+                    raise RuntimeError("Draft action cannot change while approval is pending")
+                conn.execute(
+                    "UPDATE approvals SET proposal_json=? WHERE approval_id=?",
+                    (proposal_json, row["approval_id"]),
+                )
+            conn.execute(
+                """
+                UPDATE drafts
+                SET recipient=?, subject=?, body=?, source_action=?, proposal_json=?,
+                    updated_at=?, revision=revision+1, edited_by=?
+                WHERE draft_id=?
+                """,
+                (
+                    proposal.recipient,
+                    proposal.subject,
+                    proposal.body or "",
+                    proposal.action.value,
+                    proposal_json,
+                    now,
+                    actor,
+                    draft_id,
+                ),
+            )
+        return self.get_draft(draft_id)
+
+    def link_draft_approval(self, draft_id: str, approval_id: str, *, source_action: str) -> dict[str, Any]:
+        with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT status, approval_id FROM drafts WHERE draft_id=?", (draft_id,)).fetchone()
+            if row is None:
+                raise KeyError(draft_id)
+            if row["status"] == "sent":
+                raise RuntimeError("Sent draft cannot be submitted again")
+            if row["approval_id"]:
+                raise RuntimeError("Draft already has an approval")
+            conn.execute(
+                """
+                UPDATE drafts
+                SET approval_id=?, status='approval_pending', source_action=?, updated_at=?
+                WHERE draft_id=?
+                """,
+                (approval_id, source_action, utc_now(), draft_id),
+            )
+        return self.get_draft(draft_id)
 
     def list_approvals(self, status: str = "pending", limit: int = 100) -> list[dict[str, Any]]:
         limit = max(1, min(limit, 500))
@@ -528,10 +648,7 @@ class MailStore:
 
     def get_approval(self, approval_id: str) -> dict[str, Any]:
         with self._lock, self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM approvals WHERE approval_id=?",
-                (approval_id,),
-            ).fetchone()
+            row = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
         if row is None:
             raise KeyError(approval_id)
         return self._approval_row(row)
@@ -540,10 +657,7 @@ class MailStore:
         if decision not in {"approved", "rejected"}:
             raise ValueError("Unsupported approval decision")
         with self._lock, self._connect() as conn:
-            row = conn.execute(
-                "SELECT * FROM approvals WHERE approval_id=?",
-                (approval_id,),
-            ).fetchone()
+            row = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
             if row is None:
                 raise KeyError(approval_id)
             if row["status"] != "pending":
@@ -551,7 +665,7 @@ class MailStore:
             decided_at = utc_now()
             execution_status = (
                 "ready"
-                if decision == "approved" and row["action"] in {"send_reply", "forward"}
+                if decision == "approved" and row["action"] in _EXECUTABLE_ACTIONS
                 else "not_applicable"
             )
             conn.execute(
@@ -562,10 +676,16 @@ class MailStore:
                 """,
                 (decision, decided_at, actor, execution_status, approval_id),
             )
-            updated = conn.execute(
-                "SELECT * FROM approvals WHERE approval_id=?",
-                (approval_id,),
-            ).fetchone()
+            if decision == "rejected":
+                conn.execute(
+                    """
+                    UPDATE drafts
+                    SET status='draft', approval_id=NULL, updated_at=?
+                    WHERE approval_id=? AND status='approval_pending'
+                    """,
+                    (decided_at, approval_id),
+                )
+            updated = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
         return self._approval_row(updated)
 
     def claim_approval_execution(self, approval_id: str) -> dict[str, Any]:
@@ -575,12 +695,12 @@ class MailStore:
                 raise KeyError(approval_id)
             if row["status"] != "approved":
                 raise RuntimeError("Approval must be approved before execution")
-            if row["execution_status"] == "sent":
+            if row["execution_status"] in {"sent", "completed"}:
                 return self._approval_row(row)
             if row["execution_status"] == "executing":
                 raise RuntimeError("Approval execution is already in progress")
             if row["execution_status"] not in {"ready", "failed"}:
-                raise RuntimeError("Approval does not represent an executable send action")
+                raise RuntimeError("Approval does not represent an executable action")
             started_at = utc_now()
             cursor = conn.execute(
                 """
@@ -595,22 +715,28 @@ class MailStore:
             updated = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
         return self._approval_row(updated)
 
-    def complete_approval_execution(self, approval_id: str, result: dict[str, Any]) -> dict[str, Any]:
+    def complete_approval_execution(
+        self,
+        approval_id: str,
+        result: dict[str, Any],
+        *,
+        success_status: str = "sent",
+    ) -> dict[str, Any]:
+        if success_status not in {"sent", "completed"}:
+            raise ValueError("Unsupported execution success status")
         with self._lock, self._connect() as conn:
             cursor = conn.execute(
                 """
                 UPDATE approvals
-                SET execution_status='sent', executed_at=?, execution_result_json=?, execution_error=NULL
+                SET execution_status=?, executed_at=?, execution_result_json=?, execution_error=NULL
                 WHERE approval_id=? AND execution_status='executing'
                 """,
-                (utc_now(), json.dumps(result, ensure_ascii=False), approval_id),
+                (success_status, utc_now(), json.dumps(result, ensure_ascii=False), approval_id),
             )
             if cursor.rowcount != 1:
                 raise RuntimeError("Approval execution was not in progress")
-            conn.execute(
-                "UPDATE drafts SET status='sent' WHERE approval_id=?",
-                (approval_id,),
-            )
+            if success_status == "sent":
+                conn.execute("UPDATE drafts SET status='sent' WHERE approval_id=?", (approval_id,))
             row = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
         return self._approval_row(row)
 
