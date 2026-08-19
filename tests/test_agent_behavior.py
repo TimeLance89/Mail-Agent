@@ -1,7 +1,7 @@
 from datetime import datetime
 
 from mail_agent_core.behavior import behavior_is_active, sender_matches
-from mail_agent_core.models import AgentBehaviorSettings
+from mail_agent_core.models import AgentBehaviorSettings, AgentExecutionMode
 
 
 def test_behavior_schedule_supports_normal_and_overnight_windows():
@@ -16,3 +16,8 @@ def test_behavior_schedule_supports_normal_and_overnight_windows():
 
 def test_sender_rules_are_case_insensitive():
     assert sender_matches("Boss <boss@Example.com>", ["boss@example.com"])
+
+
+def test_existing_behavior_without_execution_mode_defaults_to_live():
+    behavior = AgentBehaviorSettings.model_validate({"minimum_confidence": 0.72})
+    assert behavior.execution_mode == AgentExecutionMode.LIVE
