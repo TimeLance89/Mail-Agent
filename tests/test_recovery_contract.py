@@ -40,7 +40,7 @@ def test_system_health_ui_and_uncertain_send_reconciliation_are_visible():
     assert "/v1/system/recovery/approvals/" in app
 
 
-def test_0132_hotfix_version_is_synchronized_for_release_build():
+def test_0133_hotfix_version_is_synchronized_for_release_build():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     gateway = (ROOT / "apps/gateway/mail_agent_gateway/main.py").read_text(encoding="utf-8")
     launcher = (ROOT / "apps/launcher/mail_agent_launcher/main.py").read_text(encoding="utf-8")
@@ -52,14 +52,14 @@ def test_0132_hotfix_version_is_synchronized_for_release_build():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
     workflow = (ROOT / ".github/workflows/build-installers.yml").read_text(encoding="utf-8")
 
-    assert 'version = "0.13.2"' in pyproject
+    assert 'version = "0.13.3"' in pyproject
     assert re.search(r'^APP_VERSION = "[^"]+"$', gateway, re.MULTILINE)
     assert re.search(r'^APP_VERSION = "[^"]+"$', launcher, re.MULTILINE)
-    assert 'app_version: str = "0.13.2"' in identity
-    assert '#define MyAppVersion "0.13.2"' in installer
-    assert "const APP_VERSION = '0.13.2'" in desktop
-    assert "/assets/startup-rescue.js" in index
-    assert "/assets/desktop-links.js" in index
+    assert 'app_version: str = "0.13.3"' in identity
+    assert '#define MyAppVersion "0.13.3"' in installer
+    assert "const APP_VERSION = '0.13.3'" in desktop
+    assert "/assets/startup-rescue.js?v=0.13.3" in index
+    assert "/assets/desktop-links.js?v=0.13.3" in index
     assert '"apps/gateway/mail_agent_gateway/main.py"' in workflow
     assert '"apps/launcher/mail_agent_launcher/main.py"' in workflow
     assert "Could not synchronize APP_VERSION" in workflow
