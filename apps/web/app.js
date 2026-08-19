@@ -72,7 +72,7 @@ function stepper() {
   return `<div class="setup-stepper">${onboardingSteps.map((label, i) => `<div class="setup-dot ${i < step ? 'done' : ''} ${i === step ? 'active' : ''}"><span>${i < step ? icon('check',13) : i+1}</span><small>${label}</small></div>`).join('')}</div>`;
 }
 function setupLayout(content) {
-  return `<main class="setup-page"><section class="setup-aside">${brand()}<div class="setup-aside-copy"><span class="kicker">SETUP IN WENIGEN MINUTEN</span><h1>Dein Postfach.<br><em>Dein Agent.</em></h1><p>MAIL-AGENT arbeitet lokal, kontrolliert und ausschließlich für E-Mail.</p></div><div class="trust-pill">${icon('shield',18)}<span><b>Local-first</b><small>Schlüssel und Mail-Zugang bleiben bei dir.</small></span></div></section><section class="setup-main"><div class="setup-top"><span>Schritt ${step+1} von ${onboardingSteps.length}</span><b>${onboardingSteps[step]}</b></div>${stepper()}<div class="setup-card">${content}</div><div class="setup-foot">MAIL-AGENT v0.8.0 · Lokales Gateway</div></section></main>`;
+  return `<main class="setup-page"><section class="setup-aside">${brand()}<div class="setup-aside-copy"><span class="kicker">SETUP IN WENIGEN MINUTEN</span><h1>Dein Postfach.<br><em>Dein Agent.</em></h1><p>MAIL-AGENT arbeitet lokal, kontrolliert und ausschließlich für E-Mail.</p></div><div class="trust-pill">${icon('shield',18)}<span><b>Local-first</b><small>Schlüssel und Mail-Zugang bleiben bei dir.</small></span></div></section><section class="setup-main"><div class="setup-top"><span>Schritt ${step+1} von ${onboardingSteps.length}</span><b>${onboardingSteps[step]}</b></div>${stepper()}<div class="setup-card">${content}</div><div class="setup-foot">MAIL-AGENT v0.9.0 · Lokales Gateway</div></section></main>`;
 }
 function field(label, id, value='', type='text', placeholder='') {
   return `<label class="field"><span>${label}</span><input id="${id}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}"></label>`;
@@ -167,9 +167,9 @@ async function finishOnboarding(){saveVisible();busy=true;render();try{await pos
 function navItem(view,label,ico,badge='') { return `<button class="nav-item ${activeView===view?'active':''}" data-view="${view}">${icon(ico,19)}<span>${label}</span>${badge?`<b>${badge}</b>`:''}</button>`; }
 function dashboardLayout(content) {
   const agentName=form.agentName||identity?.agent_name||'MAIL-AGENT';
-  return `<main class="dashboard"><aside class="sidebar">${brand(true)}<nav>${navItem('overview','Übersicht','home')}${navItem('inbox','Inbox','inbox',dashboard.messages.length||'')}${navItem('approvals','Freigaben','shield',dashboard.approvals.length||'')}${navItem('drafts','Entwürfe','draft',dashboard.drafts.length||'')}${navItem('settings','Einstellungen','settings')}</nav><div class="sidebar-bottom"><div class="agent-mini"><span class="avatar">${esc(agentName.slice(0,1).toUpperCase())}</span><span><b>${esc(agentName)}</b><small><i></i> Aktiv</small></span></div></div></aside><section class="workspace"><header class="topbar"><div><span class="workspace-kicker">MAIL-AGENT</span><h1>${viewTitle()}</h1></div><div class="top-actions"><button class="btn secondary compact" id="sync-now">${icon('sync',16)}Synchronisieren</button><span class="status-pill"><i></i> Gateway online</span></div></header><div class="workspace-body">${content}</div></section></main>`;
+  return `<main class="dashboard"><aside class="sidebar">${brand(true)}<nav>${navItem('overview','Übersicht','home')}${navItem('activity','Aktivität','spark',brainStatus?.pending_total||'')}${navItem('inbox','Inbox','inbox',dashboard.messages.length||'')}${navItem('approvals','Freigaben','shield',dashboard.approvals.length||'')}${navItem('drafts','Entwürfe','draft',dashboard.drafts.length||'')}${navItem('settings','Einstellungen','settings')}</nav><div class="sidebar-bottom"><div class="agent-mini"><span class="avatar">${esc(agentName.slice(0,1).toUpperCase())}</span><span><b>${esc(agentName)}</b><small><i></i> Aktiv</small></span></div></div></aside><section class="workspace"><header class="topbar"><div><span class="workspace-kicker">MAIL-AGENT</span><h1>${viewTitle()}</h1></div><div class="top-actions"><button class="btn secondary compact" id="sync-now">${icon('sync',16)}Synchronisieren</button><span class="status-pill"><i></i> Gateway online</span></div></header><div class="workspace-body">${content}</div></section></main>`;
 }
-function viewTitle(){return ({overview:'Übersicht',inbox:'Inbox',approvals:'Freigaben',drafts:'Entwürfe',settings:'Einstellungen'})[activeView]||'Übersicht';}
+function viewTitle(){return ({overview:'Übersicht',activity:'Agent Activity',inbox:'Inbox',approvals:'Freigaben',drafts:'Entwürfe',settings:'Einstellungen'})[activeView]||'Übersicht';}
 function metric(label,value,sub,ico){return `<div class="stat-card"><div class="stat-top"><span>${label}</span><span class="stat-icon">${icon(ico,18)}</span></div><strong>${esc(value)}</strong><small>${esc(sub)}</small></div>`;}
 
 function emptyState(ico, title, text) { return `<div class="empty-state large">${icon(ico,30)}<b>${esc(title)}</b><span>${esc(text)}</span></div>`; }
@@ -177,6 +177,7 @@ function renderDashboard(){
   const mailbox=dashboard.mailboxes[0]; const sync=mailbox?.sync||{};
   let content='';
   if(activeView==='overview') content=`<section class="hero-card"><div><span class="hero-kicker">DEIN AGENT IST BEREIT</span><h2>${esc(form.agentName||'MAIL-AGENT')} hält dein Postfach im Blick.</h2><p>Neue Nachrichten werden lokal synchronisiert, analysiert und nur innerhalb deiner Regeln bearbeitet.</p><div class="hero-actions"><button class="btn primary" data-view="inbox">Inbox öffnen${icon('chevron',16)}</button><button class="btn secondary" data-view="approvals">Freigaben prüfen</button></div></div><div class="hero-orb">${icon('spark',38)}</div></section><div class="stats-grid">${metric('Postfach',mailbox?.email_address||'Nicht verbunden',mailbox?.credential_available?'Vault geschützt':'Credential fehlt','mail')}${metric('Inbox',dashboard.messages.length,'lokal geladene Nachrichten','inbox')}${metric('Freigaben',dashboard.approvals.length,'warten auf deine Entscheidung','shield')}${metric('Entwürfe',dashboard.drafts.length,'vom Agenten vorbereitet','draft')}</div><section class="panel"><div class="panel-head"><div><span>LETZTE NACHRICHTEN</span><h3>Inbox</h3></div><button class="link-btn" data-view="inbox">Alle anzeigen →</button></div>${dashboard.messages.length?dashboard.messages.slice(0,5).map(mailRow).join(''):'<div class="empty-state">Noch keine Nachrichten synchronisiert.</div>'}</section>`;
+  if(activeView==='activity') content=renderActivityCenter();
   if(activeView==='inbox') content=`<section class="panel full"><div class="panel-head"><div><span>LOKAL SYNCHRONISIERT</span><h3>${esc(mailbox?.email_address||'Inbox')}</h3></div><span class="muted">${sync.last_synced_at?`Zuletzt ${esc(new Date(sync.last_synced_at).toLocaleString())}`:'Noch kein Sync'}</span></div>${dashboard.messages.length?dashboard.messages.map(mailRow).join(''):emptyState('inbox','Deine Inbox ist noch leer','Starte die erste Synchronisierung oben rechts.')}</section>`;
   if(activeView==='approvals') content=`<section class="panel full"><div class="panel-head"><div><span>HUMAN-IN-THE-LOOP</span><h3>Freigabe-Queue</h3></div><span class="badge">${dashboard.approvals.length} offen</span></div>${dashboard.approvals.length?dashboard.approvals.map(approvalCard).join(''):emptyState('shield','Alles erledigt','Es gibt aktuell keine offenen Aktionen.')}</section>`;
   if(activeView==='drafts') content=`<section class="panel full"><div class="panel-head"><div><span>VORBEREITET VON ${esc((form.agentName||'Agent').toUpperCase())}</span><h3>Entwürfe</h3></div><span class="badge">${dashboard.drafts.length}</span></div>${dashboard.drafts.length?dashboard.drafts.map(draftCard).join(''):emptyState('draft','Noch keine Entwürfe','Sobald dein Agent Antworten vorbereitet, erscheinen sie hier.')}</section>`;
@@ -214,6 +215,37 @@ function brainActivityRow(event){
   if(event.kind==='learning_rejected') return `<div class="setting-row"><span>${esc(when)} · Lernvorschlag verworfen</span><b>${esc(event.title||'')}</b></div>`;
   return `<div class="setting-row"><span>${esc(when)} · ${esc(event.kind||'Aktivität')}</span><b>${esc(event.action||'')}</b></div>`;
 }
+
+const activityStageLabels={queued:'Eingeplant',sync:'Synchronisierung',context:'Thread-Kontext',brain:'Brain-Kontext',llm:'LLM-Analyse',proposal:'Vorschlag',rule:'Regel',policy:'Policy Engine',artifact:'Aktion / Artefakt',finished:'Ergebnis'};
+function activityOutcomeLabel(outcome=''){
+  return ({draft_created:'Entwurf erstellt',approval_required:'Freigabe nötig',executed:'Ausgeführt',no_action:'Keine Aktion',blocked:'Blockiert',below_confidence:'Konfidenz zu niedrig',ignored:'Ignoriert',error:'Fehler',sync_completed:'Synchronisiert'})[outcome]||outcome||'Läuft';
+}
+function agentTraceCard(trace){
+  const statusClass=trace.status==='failed'||trace.outcome==='error'?'bad':trace.status==='running'?'running':'ok';
+  const title=trace.subject||'Postfach-Synchronisierung';
+  const meta=[trace.sender,trace.provider&&trace.model?`${trace.provider} / ${trace.model}`:trace.provider].filter(Boolean).join(' · ');
+  const steps=(trace.steps||[]).map(step=>{
+    const duration=step.duration_ms!==null&&step.duration_ms!==undefined?` · ${Math.round(step.duration_ms)} ms`:'';
+    const state=step.status==='failed'||step.status==='blocked'?'bad':step.status==='running'?'running':'ok';
+    return `<div class="activity-step ${state}"><span class="activity-dot"></span><div><b>${esc(activityStageLabels[step.stage]||step.stage||'Schritt')}</b><small>${esc(step.detail||'')}${esc(duration)}</small></div></div>`;
+  }).join('');
+  return `<article class="activity-trace"><div class="activity-trace-head"><div><span class="activity-time">${esc(trace.started_at?new Date(trace.started_at).toLocaleString():'')}</span><h4>${esc(title)}</h4><p>${esc(meta)}</p></div><span class="activity-outcome ${statusClass}">${esc(activityOutcomeLabel(trace.outcome))}</span></div>${steps}<div class="activity-why"><b>Warum?</b><span>${esc(trace.reason||'Der Lauf ist noch nicht abgeschlossen.')}</span></div></article>`;
+}
+function renderActivityCenter(){
+  const brain=brainStatus||{};
+  const summary=brain.activity_summary||{};
+  const traces=brain.activity||[];
+  const pending=Number(brain.pending_total||0);
+  const avg=summary.avg_llm_ms===null||summary.avg_llm_ms===undefined?'—':`${Math.round(summary.avg_llm_ms)} ms`;
+  const failures=Number(summary.failed||0);
+  const running=Number(summary.running||0);
+  return `<div class="activity-center">
+    <section class="activity-hero panel"><div><span class="hero-kicker">LOCAL AGENT OBSERVABILITY</span><h2>Was der Agent tut – und warum.</h2><p>Jeder Schritt bleibt lokal nachvollziehbar. Mailtexte, Prompts, SOUL/MEMORY-Inhalte und Zugangsdaten werden nicht in Activity-Traces gespeichert.</p><div class="hero-actions"><button class="btn primary" id="activity-run-agent">Agent jetzt arbeiten lassen</button><button class="btn secondary" id="activity-refresh">Aktualisieren</button></div></div><div class="hero-orb">${icon('spark',34)}</div></section>
+    <div class="stats-grid">${metric('Backlog',pending,'Mails warten auf Analyse','inbox')}${metric('Traces',summary.trace_count||0,'zuletzt protokollierte Mail-Läufe','spark')}${metric('LLM Ø',avg,'gemessene Analysezeit','sync')}${metric('Fehler',failures,running?`${running} Lauf/Läufe aktiv`:'keine laufenden Traces','shield')}</div>
+    <section class="panel full"><div class="panel-head"><div><span>ENTSCHEIDUNGS-TIMELINE</span><h3>Letzte Agentenläufe</h3></div><span class="badge ${pending?'':'soft'}">${esc(pending)} WARTEN</span></div>${traces.length?traces.map(agentTraceCard).join(''):emptyState('spark','Noch keine Traces','Synchronisiere dein Postfach oder starte den Agenten. Jeder neue Lauf erscheint dann hier.')}</section>
+  </div>`;
+}
+
 function brainLearningCard(item){return `<div class="security-block"><span>${icon('spark',22)}</span><div><b>${esc(item.title||'Lernvorschlag')}</b><p>${esc(item.reason||'')}</p><small>${esc(item.memory_line||'')}</small><div class="inline-actions left"><button class="btn secondary compact" data-learning-reject="${esc(item.candidate_id)}">Verwerfen</button><button class="btn primary compact" data-learning-accept="${esc(item.candidate_id)}">Übernehmen</button></div></div></div>`;}
 function renderAgentSettings(){
   const rs=runtimeSettings||{};
@@ -329,7 +361,7 @@ async function runAgentNow(){
 function renderUpdatePanel(){
   const grid=document.querySelector('.settings-grid');
   if(!grid)return;
-  const current=updateStatus?.current_version||'0.8.0';
+  const current=updateStatus?.current_version||'0.9.0';
   const available=!!updateStatus?.available;
   const error=updateStatus?.error||'';
   const headline=available?`Version ${esc(updateStatus.latest_version)} verfügbar`:error?'Update-Kanal nicht erreichbar':'Du bist auf dem neuesten Stand';
@@ -367,7 +399,7 @@ document.addEventListener('click',event=>{
 });
 
 function bindDashboard(){
-  document.querySelectorAll('[data-view]').forEach(el=>el.onclick=async()=>{activeView=el.dataset.view;if(activeView==='settings')await Promise.all([runtimeSettings?Promise.resolve():loadRuntimeSettings(true),loadBrainStatus(true)]);render();});
+  document.querySelectorAll('[data-view]').forEach(el=>el.onclick=async()=>{activeView=el.dataset.view;if(['settings','activity'].includes(activeView))await Promise.all([runtimeSettings?Promise.resolve():loadRuntimeSettings(true),loadBrainStatus(true)]);render();});
   document.getElementById('sync-now')?.addEventListener('click',syncNow);
   document.querySelectorAll('[data-approve]').forEach(el=>el.onclick=()=>decideApproval(el.dataset.approve,'approve'));
   document.querySelectorAll('[data-reject]').forEach(el=>el.onclick=()=>decideApproval(el.dataset.reject,'reject'));
@@ -386,6 +418,8 @@ function bindDashboard(){
   document.getElementById('settings-save-brain')?.addEventListener('click',saveBrainSettings);
   document.getElementById('settings-refresh-brain')?.addEventListener('click',async()=>{await loadBrainStatus(false);render();});
   document.getElementById('brain-refresh-activity')?.addEventListener('click',async()=>{await loadBrainStatus(false);render();});
+  document.getElementById('activity-run-agent')?.addEventListener('click',runAgentNow);
+  document.getElementById('activity-refresh')?.addEventListener('click',async()=>{await loadBrainStatus(false);render();});
   document.querySelectorAll('[data-learning-accept]').forEach(el=>el.onclick=()=>decideBrainLearning(el.dataset.learningAccept,'accept'));
   document.querySelectorAll('[data-learning-reject]').forEach(el=>el.onclick=()=>decideBrainLearning(el.dataset.learningReject,'reject'));
   document.getElementById('settings-add-rule')?.addEventListener('click',addRule);
