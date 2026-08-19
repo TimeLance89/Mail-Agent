@@ -156,29 +156,93 @@ jobs:
           path: release-assets
       - name: Verify preview asset
         run: test -f release-assets/Mail-Agent-Setup.exe
-      - name: Point preview tag at current main
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git tag -f preview-latest "$GITHUB_SHA"
-          git push origin refs/tags/preview-latest --force
-      - name: Create or update direct-download preview release
+      - name: Publish and verify direct-download preview release
         shell: bash
         run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
           VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
-          NOTES="MAIL-AGENT Preview v${VERSION}. Automatisch gebaut aus dem aktuellen main-Stand."
-          if gh release view preview-latest >/dev/null 2>&1; then
-            gh release edit preview-latest \
-              --title "MAIL-AGENT Preview v${VERSION}" \
-              --prerelease \
-              --notes "$NOTES"
-          else
+          NOTES="MAIL-AGENT Preview v${VERSION}. Automatisch gebaut und verifiziert aus dem aktuellen main-Stand."
+          INSTALLER="release-assets/Mail-Agent-Setup.exe"
+          EXPECTED_SHA256=$(sha256sum "$INSTALLER" | awk '{print $1}')
+
+          if ! gh release view preview-latest >/dev/null 2>&1; then
+            PREVIOUS_SHA=$(git rev-parse "${GITHUB_SHA}^")
+            git tag -f preview-latest "$PREVIOUS_SHA"
+            git push origin refs/tags/preview-latest --force
             gh release create preview-latest \
-              --title "MAIL-AGENT Preview v${VERSION}" \
+              --verify-tag \
+              --title "MAIL-AGENT Preview" \
               --prerelease \
-              --notes "$NOTES"
+              --notes "MAIL-AGENT Preview-Kanal."
           fi
-          gh release upload preview-latest release-assets/Mail-Agent-Setup.exe --clobber
+
+          mkdir -p release-backup
+          gh release download preview-latest \
+            --pattern "Mail-Agent-Setup.exe" \
+            --dir release-backup \
+            --clobber >/dev/null 2>&1 || true
+
+          restore_previous_asset() {
+            if [[ -f release-backup/Mail-Agent-Setup.exe ]]; then
+              echo "Restoring previous verified preview installer."
+              gh release upload preview-latest release-backup/Mail-Agent-Setup.exe --clobber || true
+            fi
+          }
+
+          if ! gh release upload preview-latest "$INSTALLER" --clobber; then
+            restore_previous_asset
+            exit 1
+          fi
+
+          rm -rf release-verify
+          mkdir -p release-verify
+          if ! gh release download preview-latest \
+            --pattern "Mail-Agent-Setup.exe" \
+            --dir release-verify \
+            --clobber; then
+            restore_previous_asset
+            exit 1
+          fi
+
+          ACTUAL_SHA256=$(sha256sum release-verify/Mail-Agent-Setup.exe | awk '{print $1}')
+          if [[ "$ACTUAL_SHA256" != "$EXPECTED_SHA256" ]]; then
+            echo "Published installer SHA-256 mismatch."
+            restore_previous_asset
+            exit 1
+          fi
+
+          PUBLISHED_DIGEST=""
+          for _ in {1..12}; do
+            PUBLISHED_DIGEST=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/preview-latest" \
+              --jq '.assets[] | select(.name == "Mail-Agent-Setup.exe") | .digest' || true)
+            if [[ "$PUBLISHED_DIGEST" == "sha256:${EXPECTED_SHA256}" ]]; then
+              break
+            fi
+            sleep 2
+          done
+          if [[ "$PUBLISHED_DIGEST" != "sha256:${EXPECTED_SHA256}" ]]; then
+            echo "GitHub release feed does not expose the expected installer digest."
+            restore_previous_asset
+            exit 1
+          fi
+
+          gh release edit preview-latest \
+            --title "MAIL-AGENT Preview v${VERSION}" \
+            --prerelease \
+            --notes "$NOTES"
+
+          git tag -f preview-latest "$GITHUB_SHA"
+          git push origin refs/tags/preview-latest --force
+          REMOTE_SHA=$(git ls-remote origin refs/tags/preview-latest | awk '{print $1}')
+          if [[ "$REMOTE_SHA" != "$GITHUB_SHA" ]]; then
+            echo "preview-latest does not point at the current main commit."
+            exit 1
+          fi
+
+          echo "Verified preview release v${VERSION}: ${EXPECTED_SHA256}"
 
   standalone:
     strategy:
