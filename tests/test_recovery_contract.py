@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_reliability_routes_and_startup_recovery_are_wired():
     main = (ROOT / "apps/gateway/mail_agent_gateway/main.py").read_text(encoding="utf-8")
-    assert 'APP_VERSION = "0.12.0"' in main
+    assert 'APP_VERSION = "0.13.0"' in main
     assert "RecoveryManager(" in main
     assert "recovery_manager.recover_stale_executions()" in main
     assert '@app.get("/v1/system/health")' in main
@@ -39,7 +39,7 @@ def test_system_health_ui_and_uncertain_send_reconciliation_are_visible():
     assert "/v1/system/recovery/approvals/" in app
 
 
-def test_012_version_is_synchronized():
+def test_013_version_is_synchronized():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     gateway = (ROOT / "apps/gateway/mail_agent_gateway/main.py").read_text(encoding="utf-8")
     launcher = (ROOT / "apps/launcher/mail_agent_launcher/main.py").read_text(encoding="utf-8")
@@ -48,9 +48,9 @@ def test_012_version_is_synchronized():
     )
     installer = (ROOT / "packaging/windows/MailAgent.iss").read_text(encoding="utf-8")
     app = (ROOT / "apps/web/app.js").read_text(encoding="utf-8")
-    assert 'version = "0.12.0"' in pyproject
-    assert 'APP_VERSION = "0.12.0"' in gateway
-    assert 'APP_VERSION = "0.12.0"' in launcher
-    assert 'app_version: str = "0.12.0"' in identity
-    assert '#define MyAppVersion "0.12.0"' in installer
-    assert "MAIL-AGENT v0.12.0" in app
+    assert 'version = "0.13.0"' in pyproject
+    assert 'APP_VERSION = "0.13.0"' in gateway
+    assert 'APP_VERSION = "0.13.0"' in launcher
+    assert 'app_version: str = "0.13.0"' in identity
+    assert '#define MyAppVersion "0.13.0"' in installer
+    assert "MAIL-AGENT v0.13.0" in app
