@@ -12,9 +12,16 @@ from mail_agent_core.models import (
     RuleMode,
 )
 
+from .action_executor import MailActionExecutor
 from .audit import AuditLog
 from .mail_store import MailStore
 from .state import JsonStateStore
+
+_REMOTE_MUTATIONS = {
+    MailActionType.MARK_READ,
+    MailActionType.MOVE,
+    MailActionType.ARCHIVE,
+}
 
 
 class AgentRuntime:
@@ -27,6 +34,7 @@ class AgentRuntime:
         state_store: JsonStateStore,
         providers: dict[str, Any],
         audit_log: AuditLog,
+        action_executor: MailActionExecutor,
     ):
         self.mail_agent = mail_agent
         self.identity_manager = identity_manager
@@ -34,6 +42,7 @@ class AgentRuntime:
         self.state_store = state_store
         self.providers = providers
         self.audit_log = audit_log
+        self.action_executor = action_executor
 
     def _configuration(self) -> dict[str, Any]:
         state = self.state_store.read()
@@ -112,6 +121,9 @@ class AgentRuntime:
             MailActionType.SEND_REPLY,
             MailActionType.FORWARD,
         }:
+            metadata = dict(analysis.proposal.metadata)
+            metadata["drafted_from_action"] = analysis.proposal.action.value
+            analysis.proposal.metadata = metadata
             analysis.proposal.action = MailActionType.CREATE_DRAFT
             analysis.policy = self.mail_agent.policy_engine.evaluate(profile, analysis.proposal)
 
@@ -126,11 +138,14 @@ class AgentRuntime:
 
         approval = None
         draft = None
+        execution = None
         confidence_ok = analysis.proposal.confidence >= threshold
         artifacts_allowed = rule_mode not in {RuleMode.ANALYZE_ONLY, RuleMode.IGNORE}
         if create_artifacts and artifacts_allowed and confidence_ok and analysis.policy.allowed:
             if analysis.policy.requires_approval:
                 approval = self.mail_store.enqueue_approval(analysis.proposal, analysis.policy)
+            elif analysis.proposal.action in _REMOTE_MUTATIONS:
+                execution = await self.action_executor.execute_direct(analysis.proposal)
             if (
                 behavior.auto_create_drafts
                 and analysis.proposal.body
@@ -144,6 +159,7 @@ class AgentRuntime:
         payload = analysis.model_dump(mode="json")
         payload["approval"] = approval
         payload["draft"] = draft
+        payload["execution"] = execution
         payload["confidence_threshold"] = threshold
         payload["confidence_accepted"] = confidence_ok
         payload["rule_mode"] = rule_mode.value
@@ -164,6 +180,7 @@ class AgentRuntime:
         urgent = 0
         drafts = 0
         approvals = 0
+        executed = 0
         below_confidence = 0
         errors = 0
         for item in reversed(messages):
@@ -197,6 +214,7 @@ class AgentRuntime:
                     status = "processed"
                     drafts += 1 if result.get("draft") else 0
                     approvals += 1 if result.get("approval") else 0
+                    executed += 1 if result.get("execution") else 0
                 self.mail_store.record_agent_processing(
                     mailbox_id,
                     message_id,
@@ -225,6 +243,7 @@ class AgentRuntime:
             "urgent": urgent,
             "drafts": drafts,
             "approvals": approvals,
+            "executed": executed,
             "below_confidence": below_confidence,
             "errors": errors,
         }
