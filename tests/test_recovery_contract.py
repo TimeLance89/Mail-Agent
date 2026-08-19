@@ -47,10 +47,12 @@ def test_013_version_is_synchronized():
         encoding="utf-8"
     )
     installer = (ROOT / "packaging/windows/MailAgent.iss").read_text(encoding="utf-8")
-    app = (ROOT / "apps/web/app.js").read_text(encoding="utf-8")
+    desktop = (ROOT / "apps/web/desktop-links.js").read_text(encoding="utf-8")
+    index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
     assert 'version = "0.13.0"' in pyproject
     assert 'APP_VERSION = "0.13.0"' in gateway
     assert 'APP_VERSION = "0.13.0"' in launcher
     assert 'app_version: str = "0.13.0"' in identity
     assert '#define MyAppVersion "0.13.0"' in installer
-    assert "MAIL-AGENT v0.13.0" in app
+    assert "const APP_VERSION = '0.13.0'" in desktop
+    assert "/assets/desktop-links.js" in index
