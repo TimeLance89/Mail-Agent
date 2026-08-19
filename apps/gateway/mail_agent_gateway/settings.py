@@ -3,7 +3,7 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
-from .oauth_defaults import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET
+from .oauth_defaults import GOOGLE_CLIENT_ID, GOOGLE_CLIENT_SECRET, MICROSOFT_CLIENT_ID
 
 
 class Settings:
@@ -30,7 +30,10 @@ class Settings:
         "MAIL_AGENT_GOOGLE_REDIRECT_URI",
         f"http://127.0.0.1:{port}",
     )
-    microsoft_client_id = os.getenv("MAIL_AGENT_MICROSOFT_CLIENT_ID", "").strip()
+    microsoft_client_id = os.getenv(
+        "MAIL_AGENT_MICROSOFT_CLIENT_ID",
+        MICROSOFT_CLIENT_ID,
+    ).strip()
     microsoft_tenant = os.getenv("MAIL_AGENT_MICROSOFT_TENANT", "common").strip() or "common"
     microsoft_redirect_uri = os.getenv(
         "MAIL_AGENT_MICROSOFT_REDIRECT_URI",

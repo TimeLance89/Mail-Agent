@@ -20,7 +20,7 @@ let ruleSimulation = null;
 let settingsProbe = null;
 let editingDraftId = null;
 let mailboxConnector = null;
-let oauthProviders = { google: { configured: false } };
+let oauthProviders = { google: { configured: false }, microsoft: { configured: false } };
 const form = {
   ownerId: '', agentName: 'Nova', usageType: 'private', provider: 'ollama', model: '',
   autonomy: 'assistant', tone: 'friendly', language: 'de', emailSignature: '',
@@ -75,7 +75,7 @@ function stepper() {
   return `<div class="setup-stepper">${onboardingSteps.map((label, i) => `<div class="setup-dot ${i < step ? 'done' : ''} ${i === step ? 'active' : ''}"><span>${i < step ? icon('check',13) : i+1}</span><small>${label}</small></div>`).join('')}</div>`;
 }
 function setupLayout(content) {
-  return `<main class="setup-page"><section class="setup-aside">${brand()}<div class="setup-aside-copy"><span class="kicker">SETUP IN WENIGEN MINUTEN</span><h1>Dein Postfach.<br><em>Dein Agent.</em></h1><p>MAIL-AGENT arbeitet lokal, kontrolliert und ausschließlich für E-Mail.</p></div><div class="trust-pill">${icon('shield',18)}<span><b>Local-first</b><small>Schlüssel und Mail-Zugang bleiben bei dir.</small></span></div></section><section class="setup-main"><div class="setup-top"><span>Schritt ${step+1} von ${onboardingSteps.length}</span><b>${onboardingSteps[step]}</b></div>${stepper()}<div class="setup-card">${content}</div><div class="setup-foot">MAIL-AGENT v0.10.0 · Lokales Gateway</div></section></main>`;
+  return `<main class="setup-page"><section class="setup-aside">${brand()}<div class="setup-aside-copy"><span class="kicker">SETUP IN WENIGEN MINUTEN</span><h1>Dein Postfach.<br><em>Dein Agent.</em></h1><p>MAIL-AGENT arbeitet lokal, kontrolliert und ausschließlich für E-Mail.</p></div><div class="trust-pill">${icon('shield',18)}<span><b>Local-first</b><small>Schlüssel und Mail-Zugang bleiben bei dir.</small></span></div></section><section class="setup-main"><div class="setup-top"><span>Schritt ${step+1} von ${onboardingSteps.length}</span><b>${onboardingSteps[step]}</b></div>${stepper()}<div class="setup-card">${content}</div><div class="setup-foot">MAIL-AGENT v0.11.0 · Lokales Gateway</div></section></main>`;
 }
 function field(label, id, value='', type='text', placeholder='') {
   return `<label class="field"><span>${label}</span><input id="${id}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}"></label>`;
@@ -103,8 +103,11 @@ function renderSetup() {
   if (step===1) body = `<div class="card-heading"><span class="card-icon">${icon('spark',22)}</span><div><h2>Wofür soll er arbeiten?</h2><p>Damit setzen wir passende Sicherheits- und Stil-Defaults.</p></div></div><div class="selection-grid">${choice('usage','private','Privat','Alltag, Freunde, Familie und persönliche Kommunikation.',form.usageType==='private','home')}${choice('usage','work','Arbeit','Konservativere Regeln und professioneller Standard.',form.usageType==='work','draft')}${choice('usage','business','Business','Strenge Freigaben für geschäftliche Kommunikation.',form.usageType==='business','shield')}${choice('usage','custom','Individuell','Eigene Regeln und Verhalten frei konfigurieren.',form.usageType==='custom','settings')}</div>${identity?`<div class="success-line">${icon('check',16)} Identität registriert · ${esc(identity.fingerprint.slice(0,12))}…</div>`:''}${actions(0,'Identität anlegen','identity-create',busy)}`;
   if (step===2) {
     const google=oauthProviders.google||{configured:false};
+    const microsoft=oauthProviders.microsoft||{configured:false};
     const gmailConnected=mailboxConnected&&mailboxConnector==='gmail_api';
-    body = `<div class="card-heading"><span class="card-icon">${icon('inbox',22)}</span><div><h2>Postfach verbinden</h2><p>Bei Gmail reicht eine normale Google-Anmeldung. Kein IMAP-Server und kein App-Passwort nötig.</p></div></div><div class="oauth-grid"><button class="oauth-card ${google.configured?'':'unavailable'}" id="google-connect" data-configured="${google.configured?'1':'0'}" ${busy?'disabled':''}><span class="google-mark">G</span><span><b>${gmailConnected?'Gmail verbunden':'Mit Google anmelden'}</b><small>${gmailConnected?esc(form.emailAddress):google.configured?'Sicher über Google OAuth 2.0 + PKCE':'Google OAuth ist in diesem Build noch nicht konfiguriert'}</small></span><span class="oauth-arrow">${gmailConnected?icon('check',17):icon('chevron',17)}</span></button><button class="oauth-card unavailable" type="button"><span class="ms-mark">M</span><span><b>Microsoft 365</b><small>OAuth-Anmeldung folgt als nächster Connector.</small></span></button></div>${gmailConnected?`<div class="success-line">${icon('check',16)} ${esc(form.emailAddress)} ist sicher über Gmail API verbunden.</div>`:''}<div class="separator"><span>oder manuell per IMAP / SMTP</span></div><div class="form-grid two">${field('E-Mail-Adresse','email-address',form.emailAddress,'email','name@example.com')}${field('Benutzername','mailbox-username',form.mailboxUsername,'text','meist E-Mail-Adresse')}${field('IMAP-Server','imap-host',form.imapHost,'text','imap.example.com')}${field('IMAP-Port','imap-port',form.imapPort,'number')}${field('SMTP-Server','smtp-host',form.smtpHost,'text','smtp.example.com')}${field('SMTP-Port','smtp-port',form.smtpPort,'number')}</div>${field('Passwort / App-Passwort','mailbox-password',form.mailboxPassword,'password','••••••••••••')}<div class="security-note">${icon('lock',18)}<span>Google-Tokens und manuelle Mail-Secrets werden ausschließlich verschlüsselt im lokalen Vault gespeichert.</span></div><div class="setup-actions"><button class="btn text" data-back="1">Zurück</button><div class="inline-actions"><button class="btn secondary" id="mailbox-test" ${busy?'disabled':''}>IMAP testen</button><button class="btn primary" id="next" ${!mailboxConnected?'disabled':''}>Weiter${icon('chevron',17)}</button></div></div>`;
+    const microsoftConnected=mailboxConnected&&mailboxConnector==='microsoft_graph';
+    const oauthConnected=gmailConnected||microsoftConnected;
+    body = `<div class="card-heading"><span class="card-icon">${icon('inbox',22)}</span><div><h2>Postfach verbinden</h2><p>Gmail und Microsoft 365 werden direkt per OAuth verbunden. Kein App-Passwort und keine Serverdaten nötig.</p></div></div><div class="oauth-grid"><button class="oauth-card ${google.configured?'':'unavailable'}" id="google-connect" data-configured="${google.configured?'1':'0'}" ${busy?'disabled':''}><span class="google-mark">G</span><span><b>${gmailConnected?'Gmail verbunden':'Mit Google anmelden'}</b><small>${gmailConnected?esc(form.emailAddress):google.configured?'Google OAuth 2.0 + PKCE':'Google OAuth ist in diesem Build nicht konfiguriert'}</small></span><span class="oauth-arrow">${gmailConnected?icon('check',17):icon('chevron',17)}</span></button><button class="oauth-card ${microsoft.configured?'':'unavailable'}" id="microsoft-connect" data-configured="${microsoft.configured?'1':'0'}" ${busy?'disabled':''}><span class="ms-mark">M</span><span><b>${microsoftConnected?'Microsoft 365 verbunden':'Mit Microsoft anmelden'}</b><small>${microsoftConnected?esc(form.emailAddress):microsoft.configured?'Microsoft OAuth 2.0 + PKCE · Graph':'Microsoft OAuth ist in diesem Build nicht konfiguriert'}</small></span><span class="oauth-arrow">${microsoftConnected?icon('check',17):icon('chevron',17)}</span></button></div>${oauthConnected?`<div class="success-line">${icon('check',16)} ${esc(form.emailAddress)} ist sicher über ${gmailConnected?'Gmail API':'Microsoft Graph'} verbunden.</div>`:''}<div class="separator"><span>oder manuell per IMAP / SMTP</span></div><div class="form-grid two">${field('E-Mail-Adresse','email-address',form.emailAddress,'email','name@example.com')}${field('Benutzername','mailbox-username',form.mailboxUsername,'text','meist E-Mail-Adresse')}${field('IMAP-Server','imap-host',form.imapHost,'text','imap.example.com')}${field('IMAP-Port','imap-port',form.imapPort,'number')}${field('SMTP-Server','smtp-host',form.smtpHost,'text','smtp.example.com')}${field('SMTP-Port','smtp-port',form.smtpPort,'number')}</div>${field('Passwort / App-Passwort','mailbox-password',form.mailboxPassword,'password','••••••••••••')}<div class="security-note">${icon('lock',18)}<span>OAuth-Tokens und manuelle Mail-Secrets werden ausschließlich verschlüsselt im lokalen Vault gespeichert.</span></div><div class="setup-actions"><button class="btn text" data-back="1">Zurück</button><div class="inline-actions"><button class="btn secondary" id="mailbox-test" ${busy?'disabled':''}>IMAP testen</button><button class="btn primary" id="next" ${!mailboxConnected?'disabled':''}>Weiter${icon('chevron',17)}</button></div></div>`;
   }
   if (step===3) {
     const models=probe?.models||[];
@@ -122,6 +125,7 @@ function bindSetup() {
   ['owner','agent-name'].forEach(id=>document.getElementById(id)?.addEventListener('input',()=>{saveVisible();render();}));
   document.getElementById('identity-create')?.addEventListener('click',createIdentity);
   document.getElementById('google-connect')?.addEventListener('click',connectGoogle);
+  document.getElementById('microsoft-connect')?.addEventListener('click',connectMicrosoft);
   document.getElementById('mailbox-test')?.addEventListener('click',probeMailbox);
   document.getElementById('provider-test')?.addEventListener('click',probeProvider);
   document.getElementById('chatgpt-login-setup')?.addEventListener('click',startChatGptLogin);
@@ -140,7 +144,7 @@ async function connectGoogle(){
   try{
     const start=await post('/v1/oauth/google/start',{login_hint:form.emailAddress||null});
     popup.location.replace(start.authorization_url);
-    const result=await waitForOAuth(start.state,popup);
+    const result=await waitForOAuth(start.state,popup,'Google');
     mailboxConnected=true;
     mailboxId=result.mailbox_id;
     mailboxConnector='gmail_api';
@@ -153,15 +157,38 @@ async function connectGoogle(){
   }finally{busy=false;render();}
 }
 
-async function waitForOAuth(state,popup){
+async function connectMicrosoft(){
+  saveVisible();
+  const configured=document.getElementById('microsoft-connect')?.dataset.configured==='1';
+  if(!configured){showNotice('Microsoft OAuth ist für diesen Build noch nicht freigeschaltet. Der Projekt-Client muss einmalig konfiguriert werden.','error');return;}
+  const popup=window.open('about:blank','mail-agent-microsoft','popup=yes,width=560,height=760');
+  if(!popup){showNotice('Der Browser hat das Microsoft-Anmeldefenster blockiert. Pop-ups für MAIL-AGENT erlauben.','error');return;}
+  busy=true;render();
+  try{
+    const start=await post('/v1/oauth/microsoft/start',{login_hint:form.emailAddress||null});
+    popup.location.replace(start.authorization_url);
+    const result=await waitForOAuth(start.state,popup,'Microsoft');
+    mailboxConnected=true;
+    mailboxId=result.mailbox_id;
+    mailboxConnector='microsoft_graph';
+    form.emailAddress=result.email_address||form.emailAddress;
+    form.mailboxUsername=form.emailAddress;
+    showNotice(`Microsoft 365 verbunden: ${form.emailAddress}`);
+  }catch(e){
+    try{if(!popup.closed)popup.close();}catch(_){}
+    showNotice(e.message,'error');
+  }finally{busy=false;render();}
+}
+
+async function waitForOAuth(state,popup,providerLabel='OAuth'){
   const deadline=Date.now()+5*60*1000;
   while(Date.now()<deadline){
     const session=await get(`/v1/oauth/sessions/${encodeURIComponent(state)}`);
     if(session.status==='complete'){try{if(!popup.closed)popup.close();}catch(_){}return session;}
-    if(session.status==='error')throw new Error(session.error||'Google-Anmeldung fehlgeschlagen.');
+    if(session.status==='error')throw new Error(session.error||`${providerLabel}-Anmeldung fehlgeschlagen.`);
     await new Promise(resolve=>setTimeout(resolve,700));
   }
-  throw new Error('Google-Anmeldung hat zu lange gedauert. Bitte erneut versuchen.');
+  throw new Error(`${providerLabel}-Anmeldung hat zu lange gedauert. Bitte erneut versuchen.`);
 }
 
 async function probeProvider(){busy=true;render();try{probe=await post('/v1/providers/probe',{provider:form.provider});if(probe.models?.length&&!form.model)form.model=probe.models[0];if(!probe.available)showNotice(probe.detail,'error')}catch(e){showNotice(e.message,'error')}finally{busy=false;render()}}

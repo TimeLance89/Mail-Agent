@@ -45,25 +45,36 @@ jobs:
           if f'#define MyAppVersion "{version}"' not in installer:
               raise SystemExit("Windows installer version does not match pyproject.toml")
           print(f"Packaging MAIL-AGENT {version}")
-      - name: Embed Google OAuth desktop client override
+      - name: Embed OAuth desktop client overrides
         shell: python
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID || secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          MICROSOFT_OAUTH_CLIENT_ID: ${{ vars.MICROSOFT_OAUTH_CLIENT_ID || secrets.MICROSOFT_OAUTH_CLIENT_ID }}
         run: |
           import os
+          import re
           from pathlib import Path
 
-          client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip()
           target = Path("apps/gateway/mail_agent_gateway/oauth_defaults.py")
-          if client_id:
-              target.write_text(
-                  '"""Build-time OAuth defaults. Environment variables override these values."""\n\n'
-                  f'GOOGLE_CLIENT_ID = {client_id!r}\n',
-                  encoding="utf-8",
+          text = target.read_text(encoding="utf-8")
+          overrides = {
+              "GOOGLE_CLIENT_ID": os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip(),
+              "MICROSOFT_CLIENT_ID": os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "").strip(),
+          }
+          for name, value in overrides.items():
+              if not value:
+                  continue
+              text, count = re.subn(
+                  rf'^{name} = .+$',
+                  f'{name} = {value!r}',
+                  text,
+                  count=1,
+                  flags=re.MULTILINE,
               )
-              print("Using CI-provided Google OAuth desktop client ID.")
-          else:
-              print("Using the packaged MAIL-AGENT Google OAuth desktop client ID.")
+              if count != 1:
+                  raise SystemExit(f"Could not embed {name}")
+              print(f"Using CI-provided {name}.")
+          target.write_text(text, encoding="utf-8")
       - name: Validate embedded OAuth defaults
         shell: python
         run: |
@@ -72,10 +83,16 @@ jobs:
 
           path = "apps/gateway/mail_agent_gateway/oauth_defaults.py"
           py_compile.compile(path, doraise=True)
-          client_id = runpy.run_path(path).get("GOOGLE_CLIENT_ID", "")
-          if not client_id.endswith(".apps.googleusercontent.com"):
+          defaults = runpy.run_path(path)
+          google_client_id = defaults.get("GOOGLE_CLIENT_ID", "")
+          microsoft_client_id = defaults.get("MICROSOFT_CLIENT_ID", "")
+          if not google_client_id.endswith(".apps.googleusercontent.com"):
               raise SystemExit("A valid Google OAuth desktop client ID is required for release builds")
           print("Google OAuth desktop client configured.")
+          if microsoft_client_id:
+              print("Microsoft OAuth public client configured.")
+          else:
+              print("Microsoft OAuth public client not embedded; Microsoft UI stays unavailable.")
       - name: Run tests
         run: python -m pytest -q
       - name: Build standalone app
@@ -182,25 +199,36 @@ jobs:
               raise SystemExit("Could not synchronize launcher APP_VERSION")
           launcher.write_text(text, encoding="utf-8")
           print(f"Packaging MAIL-AGENT {version}")
-      - name: Embed Google OAuth desktop client override
+      - name: Embed OAuth desktop client overrides
         env:
           GOOGLE_OAUTH_CLIENT_ID: ${{ vars.GOOGLE_OAUTH_CLIENT_ID || secrets.GOOGLE_OAUTH_CLIENT_ID }}
+          MICROSOFT_OAUTH_CLIENT_ID: ${{ vars.MICROSOFT_OAUTH_CLIENT_ID || secrets.MICROSOFT_OAUTH_CLIENT_ID }}
         run: |
           python - <<'PY'
           import os
+          import re
           from pathlib import Path
 
-          client_id = os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip()
           target = Path("apps/gateway/mail_agent_gateway/oauth_defaults.py")
-          if client_id:
-              target.write_text(
-                  '"""Build-time OAuth defaults. Environment variables override these values."""\n\n'
-                  f'GOOGLE_CLIENT_ID = {client_id!r}\n',
-                  encoding="utf-8",
+          text = target.read_text(encoding="utf-8")
+          overrides = {
+              "GOOGLE_CLIENT_ID": os.environ.get("GOOGLE_OAUTH_CLIENT_ID", "").strip(),
+              "MICROSOFT_CLIENT_ID": os.environ.get("MICROSOFT_OAUTH_CLIENT_ID", "").strip(),
+          }
+          for name, value in overrides.items():
+              if not value:
+                  continue
+              text, count = re.subn(
+                  rf'^{name} = .+$',
+                  f'{name} = {value!r}',
+                  text,
+                  count=1,
+                  flags=re.MULTILINE,
               )
-              print("Using CI-provided Google OAuth desktop client ID.")
-          else:
-              print("Using the packaged MAIL-AGENT Google OAuth desktop client ID.")
+              if count != 1:
+                  raise SystemExit(f"Could not embed {name}")
+              print(f"Using CI-provided {name}.")
+          target.write_text(text, encoding="utf-8")
           PY
       - name: Validate embedded OAuth defaults
         run: |
@@ -210,10 +238,16 @@ jobs:
 
           path = "apps/gateway/mail_agent_gateway/oauth_defaults.py"
           py_compile.compile(path, doraise=True)
-          client_id = runpy.run_path(path).get("GOOGLE_CLIENT_ID", "")
-          if not client_id.endswith(".apps.googleusercontent.com"):
+          defaults = runpy.run_path(path)
+          google_client_id = defaults.get("GOOGLE_CLIENT_ID", "")
+          microsoft_client_id = defaults.get("MICROSOFT_CLIENT_ID", "")
+          if not google_client_id.endswith(".apps.googleusercontent.com"):
               raise SystemExit("A valid Google OAuth desktop client ID is required for release builds")
           print("Google OAuth desktop client configured.")
+          if microsoft_client_id:
+              print("Microsoft OAuth public client configured.")
+          else:
+              print("Microsoft OAuth public client not embedded; Microsoft UI stays unavailable.")
           PY
       - name: Run tests
         run: python -m pytest -q
@@ -238,17 +272,3 @@ jobs:
             dist/Mail-Agent-Linux-x64.tar.gz
             dist/Mail-Agent-macOS.zip
           if-no-files-found: ignore
-
-  release:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [windows, standalone]
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/download-artifact@v4
-        with:
-          path: release-assets
-          merge-multiple: true
-      - uses: softprops/action-gh-release@v2
-        with:
-          files: release-assets/*
-          generate_release_notes: true

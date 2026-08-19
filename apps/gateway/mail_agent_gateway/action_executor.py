@@ -9,10 +9,11 @@ from mail_agent_core.models import MailActionProposal, MailActionType
 from mail_agent_core.signature import assert_mandatory_agent_signature
 from mail_agent_google import GoogleGmailClient
 from mail_agent_imap import ImapMailbox, MailboxConfig, SmtpSender
+from mail_agent_microsoft import MicrosoftGraphClient
 
 from .audit import AuditLog
 from .mail_store import MailStore
-from .oauth_runtime import current_google_access_token
+from .oauth_runtime import current_google_access_token, current_microsoft_access_token
 from .vault import CredentialVault
 
 
@@ -43,6 +44,8 @@ class MailActionExecutor:
         google_client_id: str,
         google_client_secret: str | None,
         audit_log: AuditLog,
+        microsoft_client_id: str = "",
+        microsoft_tenant: str = "common",
     ) -> None:
         self.mail_store = mail_store
         self.identity_manager = identity_manager
@@ -50,6 +53,8 @@ class MailActionExecutor:
         self.mailbox_lookup = mailbox_lookup
         self.google_client_id = google_client_id
         self.google_client_secret = google_client_secret
+        self.microsoft_client_id = microsoft_client_id
+        self.microsoft_tenant = microsoft_tenant or "common"
         self.audit_log = audit_log
 
     async def execute_approval(self, approval_id: str) -> dict[str, Any]:
@@ -142,7 +147,9 @@ class MailActionExecutor:
         if proposal.action == MailActionType.SEND_REPLY:
             expected_recipient = str(source.get("sender") or "").strip().lower()
             if proposal.recipient.strip().lower() != expected_recipient:
-                raise RuntimeError("Reply recipient no longer matches the authoritative source sender")
+                raise RuntimeError(
+                    "Reply recipient no longer matches the authoritative source sender"
+                )
 
     async def _google_client(self, mailbox: dict[str, Any]) -> GoogleGmailClient:
         if not self.google_client_id:
@@ -154,6 +161,17 @@ class MailActionExecutor:
             client_secret=self.google_client_secret,
         )
         return GoogleGmailClient(access_token)
+
+    async def _microsoft_client(self, mailbox: dict[str, Any]) -> MicrosoftGraphClient:
+        if not self.microsoft_client_id:
+            raise RuntimeError("Microsoft OAuth is not configured in this MAIL-AGENT build")
+        access_token = await current_microsoft_access_token(
+            mailbox,
+            vault=self.vault,
+            client_id=self.microsoft_client_id,
+            tenant=self.microsoft_tenant,
+        )
+        return MicrosoftGraphClient(access_token)
 
     def _imap_runtime(self, mailbox: dict[str, Any]) -> ImapMailbox:
         credential_ref = mailbox.get("credential_ref")
@@ -181,7 +199,9 @@ class MailActionExecutor:
     ) -> dict[str, Any]:
         connector = str(mailbox.get("connector") or "imap")
         action = proposal.action
-        message_key = str(source.get("remote_id") or source.get("internet_message_id") or source.get("uid"))
+        message_key = str(
+            source.get("remote_id") or source.get("internet_message_id") or source.get("uid")
+        )
 
         if connector == "gmail_api":
             remote_id = source.get("remote_id")
@@ -214,7 +234,43 @@ class MailActionExecutor:
                 "connector": "gmail_api",
                 "action": action.value,
                 "remote_id": remote_id,
-                "destination": proposal.destination_folder if action == MailActionType.MOVE else destination,
+                "destination": (
+                    proposal.destination_folder if action == MailActionType.MOVE else destination
+                ),
+            }
+
+        if connector == "microsoft_graph":
+            remote_id = str(source.get("remote_id") or "")
+            if not remote_id:
+                raise RuntimeError("Microsoft Graph source message has no remote ID")
+            client = await self._microsoft_client(mailbox)
+            destination = None
+            moved: dict[str, Any] | None = None
+            if action == MailActionType.MARK_READ:
+                await client.mark_read(remote_id)
+                self.mail_store.mark_message_seen(proposal.mailbox_id, message_key)
+            elif action == MailActionType.ARCHIVE:
+                destination = "archive"
+                moved = await client.archive_message(remote_id)
+                self.mail_store.remove_message(proposal.mailbox_id, message_key)
+            elif action == MailActionType.MOVE:
+                if not proposal.destination_folder:
+                    raise RuntimeError("Move action has no destination folder")
+                destination = await client.resolve_folder_id(proposal.destination_folder)
+                moved = await client.move_message(remote_id, destination)
+                self.mail_store.remove_message(proposal.mailbox_id, message_key)
+            elif action == MailActionType.DELETE:
+                destination = "deleteditems"
+                moved = await client.trash_message(remote_id)
+                self.mail_store.remove_message(proposal.mailbox_id, message_key)
+            else:
+                raise RuntimeError("Unsupported Microsoft Graph mailbox action")
+            return {
+                "connector": "microsoft_graph",
+                "action": action.value,
+                "remote_id": (moved or {}).get("id") or remote_id,
+                "source_remote_id": remote_id,
+                "destination": proposal.destination_folder or destination,
             }
 
         if connector not in {"imap", "smtp", ""}:
@@ -265,14 +321,49 @@ class MailActionExecutor:
                 to=proposal.recipient or "",
                 subject=subject,
                 body=proposal.body or "",
-                thread_id=(source.get("remote_thread_id") if proposal.action == MailActionType.SEND_REPLY else None),
-                in_reply_to=(in_reply_to if proposal.action == MailActionType.SEND_REPLY else None),
+                thread_id=(
+                    source.get("remote_thread_id")
+                    if proposal.action == MailActionType.SEND_REPLY
+                    else None
+                ),
+                in_reply_to=(
+                    in_reply_to if proposal.action == MailActionType.SEND_REPLY else None
+                ),
                 references=(references if proposal.action == MailActionType.SEND_REPLY else None),
             )
             return {
                 "connector": "gmail_api",
                 "remote_id": payload.get("id"),
                 "thread_id": payload.get("threadId"),
+            }
+
+        if connector == "microsoft_graph":
+            remote_id = str(source.get("remote_id") or "")
+            if not remote_id:
+                raise RuntimeError("Microsoft Graph source message has no remote ID")
+            client = await self._microsoft_client(mailbox)
+            if proposal.action == MailActionType.SEND_REPLY:
+                payload = await client.send_reply(
+                    source_message_id=remote_id,
+                    recipient=proposal.recipient or "",
+                    subject=subject,
+                    body=proposal.body or "",
+                )
+                return {
+                    "connector": "microsoft_graph",
+                    "remote_id": payload.get("id"),
+                    "thread_id": payload.get("conversationId") or source.get("remote_thread_id"),
+                }
+            payload = await client.send_forward(
+                source_message_id=remote_id,
+                recipient=proposal.recipient or "",
+                subject=subject,
+                body=proposal.body or "",
+            )
+            return {
+                "connector": "microsoft_graph",
+                "remote_id": payload.get("id"),
+                "thread_id": payload.get("conversationId") or source.get("remote_thread_id"),
             }
 
         if connector not in {"imap", "smtp", ""}:
@@ -287,4 +378,8 @@ class MailActionExecutor:
             in_reply_to=(in_reply_to if proposal.action == MailActionType.SEND_REPLY else None),
             references=(references if proposal.action == MailActionType.SEND_REPLY else None),
         )
-        return {"connector": "smtp", "remote_id": None, "thread_id": source.get("thread_key")}
+        return {
+            "connector": "smtp",
+            "remote_id": None,
+            "thread_id": source.get("thread_key"),
+        }

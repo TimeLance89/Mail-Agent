@@ -28,12 +28,12 @@ from mail_agent_imap import ImapMailbox, MailboxConfig, SmtpSender
 from .action_executor import MailActionExecutor
 from .agent_runtime import AgentRuntime
 from .audit import AuditLog
-from .cloud_sync import GoogleGmailSyncService
+from .cloud_sync import GoogleGmailSyncService, MicrosoftGraphSyncService
 from .draft_service import DraftService
 from .key_store import create_master_key_store
 from .mail_store import MailStore
 from .oauth_controller import OAuthController
-from .oauth_runtime import current_google_access_token
+from .oauth_runtime import current_google_access_token, current_microsoft_access_token
 from .registry_client import RegistryClient
 from .schemas import (
     AgentAnalyzeRequest,
@@ -74,6 +74,7 @@ policy_engine = PolicyEngine()
 mail_agent = MailAgent(policy_engine)
 sync_service = MailSyncService(mail_store, vault)
 gmail_sync_service = GoogleGmailSyncService(mail_store)
+microsoft_sync_service = MicrosoftGraphSyncService(mail_store)
 oauth_controller = OAuthController(
     settings=settings,
     state_store=state_store,
@@ -138,6 +139,8 @@ action_executor = MailActionExecutor(
     google_client_id=settings.google_client_id,
     google_client_secret=settings.google_client_secret,
     audit_log=audit_log,
+    microsoft_client_id=settings.microsoft_client_id,
+    microsoft_tenant=settings.microsoft_tenant,
 )
 agent_runtime = AgentRuntime(
     mail_agent=mail_agent,
@@ -174,6 +177,19 @@ async def _sync_mailbox(mailbox: dict, *, limit: int = 100) -> dict:
                 mailbox_id=mailbox_id,
                 access_token=access_token,
                 limit=limit,
+            )
+        elif mailbox.get("connector") == "microsoft_graph":
+            if not settings.microsoft_client_id:
+                raise RuntimeError("Microsoft OAuth is not configured in this MAIL-AGENT build")
+            access_token = await current_microsoft_access_token(
+                mailbox,
+                vault=vault,
+                client_id=settings.microsoft_client_id,
+                tenant=settings.microsoft_tenant,
+            )
+            result = await microsoft_sync_service.sync(
+                mailbox_id=mailbox_id,
+                access_token=access_token,
             )
         else:
             result = await sync_service.sync(_runtime_mailbox(mailbox_id), limit=limit)
@@ -257,7 +273,7 @@ async def lifespan(_: FastAPI):
                 await task
 
 
-APP_VERSION = "0.10.0"
+APP_VERSION = "0.11.0"
 update_client = UpdateClient(
     feed_url=settings.update_feed_url,
     release_page=settings.update_release_page,
@@ -433,6 +449,19 @@ async def start_google_oauth(body: OAuthStartRequest) -> dict:
     }
 
 
+@app.post("/v1/oauth/microsoft/start")
+async def start_microsoft_oauth(body: OAuthStartRequest) -> dict:
+    try:
+        result = oauth_controller.start_microsoft(body.login_hint)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    return {
+        "provider": result.provider,
+        "state": result.state,
+        "authorization_url": result.authorization_url,
+    }
+
+
 @app.get("/v1/oauth/sessions/{state}")
 async def oauth_session_status(state: str) -> dict:
     try:
@@ -486,6 +515,62 @@ async def google_oauth_callback(
         state=state, code=code, error=error, error_description=error_description
     )
 
+
+
+async def _finish_microsoft_oauth(
+    *,
+    state: str | None,
+    code: str | None,
+    error: str | None,
+    error_description: str | None,
+) -> HTMLResponse:
+    if not state:
+        raise HTTPException(status_code=400, detail="Missing OAuth state")
+    if error:
+        message = error_description or error
+        oauth_controller.fail(state=state, provider="microsoft", error=message)
+        return HTMLResponse(_oauth_result_page(False, "Microsoft-Anmeldung abgebrochen", message))
+    if not code:
+        oauth_controller.fail(
+            state=state,
+            provider="microsoft",
+            error="Authorization code is missing",
+        )
+        return HTMLResponse(
+            _oauth_result_page(
+                False,
+                "Microsoft-Anmeldung fehlgeschlagen",
+                "Kein Autorisierungscode erhalten.",
+            )
+        )
+    try:
+        result = await oauth_controller.complete_microsoft(state=state, code=code)
+        return HTMLResponse(
+            _oauth_result_page(
+                True,
+                "Microsoft 365 ist verbunden",
+                f"{result.get('email_address') or 'Das Postfach'} wurde sicher mit MAIL-AGENT verbunden.",
+            )
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=400, detail="OAuth session not found or expired") from exc
+    except Exception as exc:
+        return HTMLResponse(
+            _oauth_result_page(False, "Microsoft-Anmeldung fehlgeschlagen", str(exc)),
+            status_code=502,
+        )
+
+
+@app.get("/v1/oauth/microsoft/callback", response_class=HTMLResponse, include_in_schema=False)
+async def microsoft_oauth_callback(
+    state: str | None = None,
+    code: str | None = None,
+    error: str | None = None,
+    error_description: str | None = None,
+) -> HTMLResponse:
+    return await _finish_microsoft_oauth(
+        state=state, code=code, error=error, error_description=error_description
+    )
 
 
 @app.get("/v1/system/update")
