@@ -17,7 +17,7 @@ from fastapi.staticfiles import StaticFiles
 
 from mail_agent_core.agent import MailAgent
 from mail_agent_core.identity import IdentityManager
-from mail_agent_core.models import AgentBehaviorSettings
+from mail_agent_core.models import AgentBehaviorSettings, AgentProfile
 from mail_agent_core.policy import PolicyEngine
 from mail_agent_core.providers import CodexCliProvider, OllamaProvider
 from mail_agent_core.update import UpdateClient
@@ -37,9 +37,11 @@ from .schemas import (
     AgentAnalyzeRequest,
     AgentRunRequest,
     BehaviorSettingsRequest,
+    BrainUpdateRequest,
     DraftSubmitRequest,
     DraftUpdateRequest,
     LLMSettingsRequest,
+    LearningDecisionRequest,
     ProfileSettingsRequest,
     ApprovalDecisionRequest,
     IdentitySetupRequest,
@@ -147,6 +149,7 @@ draft_service = DraftService(
     state_store=state_store,
     policy_engine=policy_engine,
     audit_log=audit_log,
+    brain=agent_runtime.brain,
 )
 
 
@@ -232,7 +235,7 @@ async def lifespan(_: FastAPI):
                 await task
 
 
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.8.0"
 update_client = UpdateClient(
     feed_url=settings.update_feed_url,
     release_page=settings.update_release_page,
@@ -622,6 +625,7 @@ async def _settings_payload() -> dict:
         "model": config["model"],
         "profile": config["profile"],
         "behavior": behavior.model_dump(mode="json"),
+        "brain": agent_runtime.brain.public_status(),
         "providers": catalog,
         "invariants": {
             "agent_identity_required": True,
@@ -684,6 +688,91 @@ async def update_profile_settings(body: ProfileSettingsRequest) -> dict:
         details={"agent_id": identity.agent_id, "autonomy": profile.autonomy_mode.value},
     )
     return await _settings_payload()
+
+
+def _brain_payload() -> dict:
+    _state, config = _configuration_or_409()
+    identity = identity_manager.load()
+    profile = AgentProfile.model_validate(config["profile"])
+    agent_runtime.brain.ensure(identity, profile)
+    snapshot = agent_runtime.brain.snapshot()
+    mailboxes = []
+    for mailbox in _configured_mailboxes():
+        mailbox_id = str(mailbox.get("mailbox_id") or "")
+        if not mailbox_id:
+            continue
+        status = agent_runtime.mailbox_status(mailbox_id)
+        status["email_address"] = mailbox.get("email_address")
+        if not status["enabled"] or not status["auto_analyze_new_mail"]:
+            status["state"] = "paused"
+        elif not status["schedule_active"]:
+            status["state"] = "outside_schedule"
+        elif status["pending"]:
+            status["state"] = "work_pending"
+        else:
+            status["state"] = "idle"
+        mailboxes.append(status)
+    return {
+        "status": agent_runtime.brain.public_status(),
+        "soul": snapshot.soul,
+        "memory": snapshot.memory,
+        "learning_candidates": agent_runtime.brain.learning_candidates(),
+        "recent_activity": agent_runtime.brain.recent_activity(30),
+        "mailboxes": mailboxes,
+        "pending_total": sum(int(item.get("pending") or 0) for item in mailboxes),
+    }
+
+
+@app.get("/v1/agent/brain")
+async def get_agent_brain() -> dict:
+    return _brain_payload()
+
+
+@app.put("/v1/agent/brain")
+async def update_agent_brain(body: BrainUpdateRequest) -> dict:
+    if body.soul is None and body.memory is None:
+        raise HTTPException(status_code=400, detail="SOUL.md or MEMORY.md must be supplied")
+    _configuration_or_409()
+    try:
+        agent_runtime.brain.update_owner_memory(soul=body.soul, memory=body.memory)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit_log.append(
+        "agent_brain_owner_memory_changed",
+        actor=body.actor,
+        details={"soul_changed": body.soul is not None, "memory_changed": body.memory is not None},
+    )
+    return _brain_payload()
+
+
+@app.post("/v1/agent/brain/learning/{candidate_id}/accept")
+async def accept_agent_learning(candidate_id: str, body: LearningDecisionRequest) -> dict:
+    _configuration_or_409()
+    try:
+        candidate = agent_runtime.brain.accept_learning(candidate_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Learning candidate not found") from exc
+    audit_log.append(
+        "agent_learning_accepted",
+        actor=body.actor,
+        details={"candidate_id": candidate_id, "title": candidate.get("title")},
+    )
+    return _brain_payload()
+
+
+@app.post("/v1/agent/brain/learning/{candidate_id}/reject")
+async def reject_agent_learning(candidate_id: str, body: LearningDecisionRequest) -> dict:
+    _configuration_or_409()
+    try:
+        candidate = agent_runtime.brain.reject_learning(candidate_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Learning candidate not found") from exc
+    audit_log.append(
+        "agent_learning_rejected",
+        actor=body.actor,
+        details={"candidate_id": candidate_id, "title": candidate.get("title")},
+    )
+    return _brain_payload()
 
 
 @app.post("/v1/providers/codex/login")

@@ -44,6 +44,16 @@ class ProfileSettingsRequest(BaseModel):
     profile: AgentProfile
 
 
+class BrainUpdateRequest(BaseModel):
+    soul: str | None = Field(default=None, max_length=40_000)
+    memory: str | None = Field(default=None, max_length=60_000)
+    actor: str = Field(default="local-user", min_length=1, max_length=200)
+
+
+class LearningDecisionRequest(BaseModel):
+    actor: str = Field(default="local-user", min_length=1, max_length=200)
+
+
 class AgentRunRequest(BaseModel):
     mailbox_id: str | None = Field(default=None, max_length=128)
     force: bool = False

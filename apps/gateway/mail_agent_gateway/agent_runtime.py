@@ -60,6 +60,28 @@ class AgentRuntime:
     def behavior(config: dict[str, Any]) -> AgentBehaviorSettings:
         return AgentBehaviorSettings.model_validate(config.get("behavior") or {})
 
+    def _ensure_brain(self, config: dict[str, Any]) -> tuple[Any, AgentProfile]:
+        identity = self.identity_manager.load()
+        profile = AgentProfile.model_validate(config["profile"])
+        self.brain.ensure(identity, profile)
+        return identity, profile
+
+    def mailbox_status(self, mailbox_id: str) -> dict[str, Any]:
+        config = self._configuration()
+        behavior = self.behavior(config)
+        self._ensure_brain(config)
+        pending = self.work_queue.pending_count(mailbox_id)
+        return {
+            "mailbox_id": mailbox_id,
+            "pending": pending,
+            "enabled": behavior.enabled,
+            "auto_analyze_new_mail": behavior.auto_analyze_new_mail,
+            "schedule_active": behavior_is_active(behavior),
+            "max_messages_per_cycle": behavior.max_messages_per_cycle,
+            "provider": str(config.get("provider") or ""),
+            "model": str(config.get("model") or ""),
+        }
+
     def _with_thread_context(
         self,
         message: MailMessageContext,
@@ -98,16 +120,12 @@ class AgentRuntime:
         provider = self.providers.get(provider_name)
         if provider is None:
             raise RuntimeError("Configured provider is unavailable")
-        identity = self.identity_manager.load()
-        profile = AgentProfile.model_validate(config["profile"])
+        identity, profile = self._ensure_brain(config)
         behavior = self.behavior(config)
         threshold = behavior.minimum_confidence if minimum_confidence is None else minimum_confidence
         message = self._with_thread_context(message, behavior)
 
-        # The brain is local persistent context. It never replaces deterministic policy or identity checks.
-        self.brain.ensure(identity, profile)
         brain_context = self.brain.build_context(message)
-
         analysis = await self.mail_agent.analyze(
             profile=profile,
             provider=provider,
@@ -186,14 +204,32 @@ class AgentRuntime:
     async def run_mailbox(self, mailbox_id: str, *, force: bool = False) -> dict[str, Any]:
         config = self._configuration()
         behavior = self.behavior(config)
-        if not force:
-            if not behavior.enabled or not behavior.auto_analyze_new_mail:
-                return {"mailbox_id": mailbox_id, "processed": 0, "skipped": "agent_disabled"}
-            if not behavior_is_active(behavior):
-                return {"mailbox_id": mailbox_id, "processed": 0, "skipped": "outside_schedule"}
-
-        # Filter processing state before LIMIT. This guarantees that older backlog rows are eventually reached.
+        self._ensure_brain(config)
         pending_before = self.work_queue.pending_count(mailbox_id)
+
+        if not force and (not behavior.enabled or not behavior.auto_analyze_new_mail):
+            summary = {
+                "mailbox_id": mailbox_id,
+                "processed": 0,
+                "skipped": "agent_disabled",
+                "pending_before": pending_before,
+                "pending_after": pending_before,
+            }
+            self.brain.record_cycle(summary)
+            summary["brain"] = self.brain.public_status()
+            return summary
+        if not force and not behavior_is_active(behavior):
+            summary = {
+                "mailbox_id": mailbox_id,
+                "processed": 0,
+                "skipped": "outside_schedule",
+                "pending_before": pending_before,
+                "pending_after": pending_before,
+            }
+            self.brain.record_cycle(summary)
+            summary["brain"] = self.brain.public_status()
+            return summary
+
         messages = self.work_queue.list_pending(mailbox_id, behavior.max_messages_per_cycle)
         processed = 0
         ignored = 0
@@ -267,7 +303,8 @@ class AgentRuntime:
             "errors": errors,
             "pending_before": pending_before,
             "pending_after": pending_after,
-            "brain": self.brain.public_status(),
         }
+        self.brain.record_cycle(summary)
+        summary["brain"] = self.brain.public_status()
         self.audit_log.append("agent_cycle_completed", details=summary)
         return summary
