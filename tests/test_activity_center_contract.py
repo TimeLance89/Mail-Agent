@@ -16,7 +16,7 @@ def test_activity_center_version_is_synchronized():
     gateway = Path("apps/gateway/mail_agent_gateway/main.py").read_text(encoding="utf-8")
     launcher = Path("apps/launcher/mail_agent_launcher/main.py").read_text(encoding="utf-8")
     installer = Path("packaging/windows/MailAgent.iss").read_text(encoding="utf-8")
-    assert 'version = "0.9.0"' in pyproject
-    assert 'APP_VERSION = "0.9.0"' in gateway
-    assert 'APP_VERSION = "0.9.0"' in launcher
-    assert '#define MyAppVersion "0.9.0"' in installer
+    assert 'version = "0.10.0"' in pyproject
+    assert 'APP_VERSION = "0.10.0"' in gateway
+    assert 'APP_VERSION = "0.10.0"' in launcher
+    assert '#define MyAppVersion "0.10.0"' in installer
