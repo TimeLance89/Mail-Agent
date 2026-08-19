@@ -19,7 +19,7 @@ from typing import Any
 from mail_agent_core.update import UpdateClient
 
 APP_NAME = "MAIL-AGENT"
-APP_VERSION = "0.7.0"
+APP_VERSION = "0.8.0"
 GATEWAY_PORT = 8765
 REGISTRY_PORT = 8770
 GATEWAY_URL = f"http://127.0.0.1:{GATEWAY_PORT}"
