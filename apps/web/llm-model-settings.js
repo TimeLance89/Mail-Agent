@@ -1,84 +1,23 @@
 (() => {
   const PROBE_URL = '/v1/providers/probe';
-  const MODEL_HELP_ATTR = 'data-llm-model-help';
-  const MODEL_NOTE_ATTR = 'data-llm-model-note';
+  const CACHE_TTL_MS = 30_000;
+  const cache = new Map();
+  const inFlight = new Map();
+  let setupDiscoveryProvider = null;
+  let settingsDiscoveryProvider = null;
 
   const providerName = provider => provider === 'ollama' ? 'Ollama' : 'ChatGPT / Codex';
-
-  const selectedSetupProvider = () =>
+  const setupProvider = () =>
     document.querySelector('[data-choice-group="provider"].selected')?.dataset.choice || null;
-
-  const modelSuggestions = control => {
-    if (!control) return [];
-    if (control.tagName === 'SELECT') {
-      return [...control.options].map(option => option.value).filter(Boolean);
-    }
-    const listId = control.getAttribute('list');
-    const list = listId ? document.getElementById(listId) : null;
-    return list ? [...list.options].map(option => option.value).filter(Boolean) : [];
-  };
-
-  const ensureDatalist = (control, id, suggestions) => {
-    let datalist = document.getElementById(id);
-    if (!datalist) {
-      datalist = document.createElement('datalist');
-      datalist.id = id;
-      control.insertAdjacentElement('afterend', datalist);
-    }
-    const values = [...new Set((suggestions || []).map(value => String(value).trim()).filter(Boolean))];
-    datalist.replaceChildren(...values.map(value => {
-      const option = document.createElement('option');
-      option.value = value;
-      return option;
-    }));
-    control.setAttribute('list', id);
-    return datalist;
-  };
-
-  const asModelInput = (control, { id, listId, suggestions, placeholder }) => {
-    if (!control) return null;
-    const currentValue = String(control.value || '').trim();
-    let input = control;
-    if (control.tagName !== 'INPUT') {
-      input = document.createElement('input');
-      input.id = id;
-      input.value = currentValue;
-      control.replaceWith(input);
-    }
-    input.id = id;
-    input.type = 'text';
-    input.autocomplete = 'off';
-    input.spellcheck = false;
-    input.placeholder = placeholder;
-    ensureDatalist(input, listId, suggestions);
-    return input;
-  };
-
-  const addHelp = (label, text) => {
-    if (!label) return;
-    let help = label.querySelector(`[${MODEL_HELP_ATTR}]`);
-    if (!help) {
-      help = document.createElement('small');
-      help.setAttribute(MODEL_HELP_ATTR, '1');
-      help.className = 'muted';
-      label.appendChild(help);
-    }
-    help.textContent = text;
-  };
-
-  const addSelectionNote = (panel, provider, input) => {
-    if (!panel || !input) return;
-    let note = panel.querySelector(`[${MODEL_NOTE_ATTR}]`);
-    if (!note) {
-      note = document.createElement('div');
-      note.setAttribute(MODEL_NOTE_ATTR, '1');
-      note.className = 'security-note';
-      const formGrid = panel.querySelector('.form-grid');
-      if (formGrid) formGrid.insertAdjacentElement('afterend', note);
-    }
-    const selected = String(input.value || 'default').trim() || 'default';
-    note.textContent = `Ausgewähltes Modell: ${providerName(provider)} · ${selected}`;
-  };
+  const unique = values => [...new Set((values || []).map(value => String(value).trim()).filter(Boolean))];
+  const actualModels = (provider, models) =>
+    unique(models).filter(model => !(provider === 'codex' && model === 'default'));
+  const selectableModels = (provider, models) => unique([
+    ...(provider === 'codex' ? ['default'] : []),
+    ...models,
+  ]);
+  const modelLabel = (provider, model) =>
+    provider === 'codex' && model === 'default' ? 'Automatisch (Codex-Standard)' : model;
 
   const probeProvider = async provider => {
     const response = await fetch(PROBE_URL, {
@@ -88,118 +27,336 @@
     });
     const data = await response.json().catch(() => ({}));
     if (!response.ok) throw new Error(data.detail || `Provider-Prüfung fehlgeschlagen (${response.status})`);
-    return data;
+    const models = selectableModels(provider, data.models || []);
+    const result = { ...data, models };
+    if (provider === 'ollama' && result.available && models.length === 0) {
+      result.available = false;
+      result.detail = 'Ollama läuft, aber es ist noch kein Modell installiert.';
+    }
+    return result;
   };
 
-  const refreshSuggestions = (input, provider, models) => {
-    const current = String(input.value || '').trim();
-    const suggestions = [...new Set([
-      ...(provider === 'codex' ? ['default'] : []),
-      ...(models || []),
-      ...(current ? [current] : []),
-    ])];
-    ensureDatalist(input, input.getAttribute('list') || 'settings-model-options', suggestions);
+  const discoverModels = async (provider, force = false) => {
+    const cached = cache.get(provider);
+    if (!force && cached && Date.now() - cached.at < CACHE_TTL_MS) return cached.result;
+    if (!force && inFlight.has(provider)) return inFlight.get(provider);
+    const job = probeProvider(provider).then(result => {
+      cache.set(provider, { at: Date.now(), result });
+      return result;
+    });
+    inFlight.set(provider, job);
+    try {
+      return await job;
+    } finally {
+      if (inFlight.get(provider) === job) inFlight.delete(provider);
+    }
+  };
+
+  const ensureNote = (container, beforeSelector = null) => {
+    if (!container) return null;
+    let note = container.querySelector('[data-llm-model-note]');
+    if (!note) {
+      note = document.createElement('div');
+      note.dataset.llmModelNote = '1';
+      note.className = 'security-note';
+      const before = beforeSelector ? container.querySelector(beforeSelector) : null;
+      if (before) before.insertAdjacentElement('beforebegin', note);
+      else container.appendChild(note);
+    }
+    return note;
+  };
+
+  const setNote = (container, text, beforeSelector = null) => {
+    const note = ensureNote(container, beforeSelector);
+    if (note) note.textContent = text;
+  };
+
+  const ensureHelp = (label, text) => {
+    if (!label) return;
+    let help = label.querySelector('[data-llm-model-help]');
+    if (!help) {
+      help = document.createElement('small');
+      help.dataset.llmModelHelp = '1';
+      help.className = 'muted';
+      label.appendChild(help);
+    }
+    help.textContent = text;
+  };
+
+  const buildSelect = (control, provider, models, savedValue, id) => {
+    const values = selectableModels(provider, models);
+    const saved = String(savedValue || '').trim();
+    const savedDetected = !saved || values.includes(saved);
+    if (saved && !values.includes(saved)) values.push(saved);
+
+    let select = control;
+    if (control.tagName !== 'SELECT') {
+      select = document.createElement('select');
+      control.replaceWith(select);
+    }
+    select.id = id;
+    select.replaceChildren();
+
+    if (!values.length) {
+      const option = document.createElement('option');
+      option.value = '';
+      option.textContent = 'Keine Modelle gefunden';
+      option.disabled = true;
+      option.selected = true;
+      select.appendChild(option);
+      return select;
+    }
+
+    for (const value of values) {
+      const option = document.createElement('option');
+      option.value = value;
+      option.textContent = modelLabel(provider, value);
+      if (saved && value === saved && !savedDetected) {
+        option.textContent = `${value} · gespeichert, aktuell nicht erkannt`;
+      }
+      select.appendChild(option);
+    }
+
+    const preferred = saved && values.includes(saved)
+      ? saved
+      : provider === 'codex' && values.includes('default')
+        ? 'default'
+        : values[0];
+    select.value = preferred;
+    return select;
+  };
+
+  const addManualFallback = (label, select, provider, onApply) => {
+    if (!label || !select || label.querySelector('[data-llm-model-manual]')) return;
+    const details = document.createElement('details');
+    details.dataset.llmModelManual = '1';
+    details.className = 'llm-model-manual';
+    const summary = document.createElement('summary');
+    summary.textContent = 'Expertenoption: andere Modell-ID';
+    const row = document.createElement('div');
+    row.className = 'inline-actions left';
+    const input = document.createElement('input');
+    input.type = 'text';
+    input.autocomplete = 'off';
+    input.spellcheck = false;
+    input.placeholder = provider === 'ollama' ? 'Eigene Ollama-Modell-ID' : 'Exakte Codex-Modell-ID';
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'btn secondary compact';
+    button.textContent = 'Übernehmen';
+    button.onclick = event => {
+      event.preventDefault();
+      const value = input.value.trim();
+      if (!value) return;
+      if (![...select.options].some(option => option.value === value)) {
+        const option = document.createElement('option');
+        option.value = value;
+        option.textContent = `${value} · manuell`;
+        select.appendChild(option);
+      }
+      select.value = value;
+      select.dispatchEvent(new Event('change', { bubbles: true }));
+      onApply?.(value);
+      details.open = false;
+    };
+    row.append(input, button);
+    details.append(summary, row);
+    label.appendChild(details);
+  };
+
+  const resultSummary = (provider, result, selected) => {
+    const count = actualModels(provider, result.models || []).length;
+    const countText = count === 1 ? '1 Modell automatisch erkannt' : `${count} Modelle automatisch erkannt`;
+    return `${countText} · Ausgewählt: ${modelLabel(provider, selected || 'default')}`;
+  };
+
+  const applySettings = (provider, result) => {
+    const providerSelect = document.getElementById('settings-provider');
+    const control = document.getElementById('settings-model');
+    if (!providerSelect || providerSelect.value !== provider || !control) return;
+    const label = control.closest('.field');
+    const panel = providerSelect.closest('.panel');
+    if (!label || !panel) return;
+
+    let stored = control.value;
+    try {
+      stored = stored || (typeof runtimeSettings !== 'undefined' ? runtimeSettings?.model : '');
+    } catch (_) {}
+
+    const select = buildSelect(control, provider, result.models || [], stored, 'settings-model');
+    select.dataset.llmReady = provider;
+    const heading = label.querySelector(':scope > span');
+    if (heading) heading.textContent = 'LLM-Modell';
+    ensureHelp(
+      label,
+      provider === 'ollama'
+        ? 'Installierte Ollama-Modelle werden automatisch erkannt und hier angezeigt.'
+        : 'Die Modellliste wird automatisch aus deinem installierten offiziellen Codex-Client gelesen. „Automatisch“ nutzt dessen Standardwahl.',
+    );
+    addManualFallback(label, select, provider, () => {
+      setNote(panel, resultSummary(provider, result, select.value));
+    });
+    select.onchange = () => setNote(panel, resultSummary(provider, result, select.value));
+    setNote(
+      panel,
+      result.available
+        ? resultSummary(provider, result, select.value)
+        : (result.detail || `${providerName(provider)} ist momentan nicht bereit.`),
+    );
+  };
+
+  const refreshSettings = async (provider, button) => {
+    const panel = document.getElementById('settings-provider')?.closest('.panel');
+    if (!panel) return;
+    button.disabled = true;
+    const previous = button.textContent;
+    button.textContent = 'Ermittle Modelle …';
+    setNote(panel, `Verfügbare ${providerName(provider)}-Modelle werden automatisch ermittelt …`);
+    try {
+      const result = await discoverModels(provider, true);
+      applySettings(provider, result);
+    } catch (error) {
+      setNote(panel, error?.message || 'Modelle konnten nicht ermittelt werden.');
+    } finally {
+      button.disabled = false;
+      button.textContent = previous;
+    }
   };
 
   const ensureRefreshButton = (panel, provider) => {
-    if (!panel || panel.querySelector('#settings-refresh-models')) return;
-    const actions = panel.querySelector('.inline-actions.left');
-    if (!actions) return;
-    const button = document.createElement('button');
-    button.type = 'button';
-    button.id = 'settings-refresh-models';
-    button.className = 'btn secondary';
-    button.textContent = provider === 'ollama' ? 'Modelle neu laden' : 'Provider prüfen';
-    button.addEventListener('click', async event => {
+    if (!panel) return;
+    let button = panel.querySelector('#settings-refresh-models');
+    if (!button) {
+      const actions = panel.querySelector('.inline-actions.left');
+      if (!actions) return;
+      button = document.createElement('button');
+      button.type = 'button';
+      button.id = 'settings-refresh-models';
+      button.className = 'btn secondary';
+      actions.insertBefore(button, actions.firstChild);
+    }
+    button.textContent = 'Modelle neu erkennen';
+    button.onclick = event => {
       event.preventDefault();
       event.stopPropagation();
-      button.disabled = true;
-      const oldText = button.textContent;
-      button.textContent = 'Prüfe …';
-      const input = panel.querySelector('#settings-model');
-      const note = panel.querySelector(`[${MODEL_NOTE_ATTR}]`);
-      try {
-        const result = await probeProvider(provider);
-        if (input) refreshSuggestions(input, provider, result.models || []);
-        if (note) {
-          if (!result.available) note.textContent = result.detail || `${providerName(provider)} ist momentan nicht bereit.`;
-          else if (provider === 'ollama' && (result.models || []).length) note.textContent = `${result.models.length} installierte Ollama-Modelle gefunden. Wähle das gewünschte Modell im Feld oben.`;
-          else note.textContent = `${providerName(provider)} ist bereit. Trage „default“ oder eine vom Provider unterstützte Modell-ID ein.`;
-        }
-      } catch (error) {
-        if (note) note.textContent = error?.message || 'Provider konnte nicht geprüft werden.';
-      } finally {
-        button.disabled = false;
-        button.textContent = oldText;
-      }
-    });
-    actions.insertBefore(button, actions.firstChild);
+      refreshSettings(provider, button);
+    };
+  };
+
+  const autoDiscoverSettings = async provider => {
+    settingsDiscoveryProvider = provider;
+    const panel = document.getElementById('settings-provider')?.closest('.panel');
+    if (panel) setNote(panel, `Verfügbare ${providerName(provider)}-Modelle werden automatisch ermittelt …`);
+    try {
+      const result = await discoverModels(provider);
+      applySettings(provider, result);
+    } catch (error) {
+      if (panel) setNote(panel, error?.message || 'Modelle konnten nicht automatisch ermittelt werden.');
+    }
   };
 
   const enhanceSettings = () => {
     const providerSelect = document.getElementById('settings-provider');
-    const originalControl = document.getElementById('settings-model');
-    if (!providerSelect || !originalControl) return;
+    const control = document.getElementById('settings-model');
+    if (!providerSelect || !control) return;
     const provider = providerSelect.value || 'ollama';
-    const label = originalControl.closest('.field');
     const panel = providerSelect.closest('.panel');
-    if (!label || !panel || label.dataset.llmModelEnhanced === provider) return;
-
-    const suggestions = modelSuggestions(originalControl);
-    const input = asModelInput(originalControl, {
-      id: 'settings-model',
-      listId: 'settings-model-options',
-      suggestions: [...(provider === 'codex' ? ['default'] : []), ...suggestions],
-      placeholder: provider === 'ollama' ? 'z. B. qwen3:latest' : 'default oder exakte Modell-ID',
-    });
-    if (!input) return;
-
-    label.dataset.llmModelEnhanced = provider;
-    const heading = label.querySelector('span');
-    if (heading) heading.textContent = provider === 'ollama' ? 'LLM-Modell' : 'LLM-Modell-ID';
-    addHelp(
-      label,
-      provider === 'ollama'
-        ? 'Installierte Ollama-Modelle erscheinen als Vorschläge. Du kannst das Modell jederzeit wechseln.'
-        : '„default“ überlässt die Wahl dem offiziellen Codex-Client. Alternativ kannst du eine konkrete, von deinem ChatGPT/Codex-Zugang unterstützte Modell-ID eintragen.',
-    );
-    addSelectionNote(panel, provider, input);
     ensureRefreshButton(panel, provider);
-    input.addEventListener('input', () => addSelectionNote(panel, provider, input));
+    if (control.dataset.llmReady === provider) return;
+
+    const cached = cache.get(provider);
+    if (cached && Date.now() - cached.at < CACHE_TTL_MS) {
+      applySettings(provider, cached.result);
+      return;
+    }
+    if (settingsDiscoveryProvider !== provider || !inFlight.has(provider)) {
+      autoDiscoverSettings(provider);
+    }
+  };
+
+  const setSetupNote = text => {
+    const card = document.querySelector('.setup-card');
+    if (card) setNote(card, text, '.setup-actions');
+  };
+
+  const applySetupProbe = (provider, result) => {
+    if (setupProvider() !== provider) return;
+    try {
+      if (typeof probe !== 'undefined') probe = result;
+      if (typeof form !== 'undefined') {
+        const models = result.models || [];
+        const current = String(form.model || '').trim();
+        if (!current || !models.includes(current)) {
+          form.model = provider === 'codex' && models.includes('default') ? 'default' : (models[0] || '');
+        }
+      }
+      if (typeof render === 'function') render();
+    } catch (_) {}
+  };
+
+  const autoDiscoverSetup = async provider => {
+    if (setupDiscoveryProvider === provider) return;
+    setupDiscoveryProvider = provider;
+    setSetupNote(`Verfügbare ${providerName(provider)}-Modelle werden automatisch ermittelt …`);
+    try {
+      const result = await discoverModels(provider);
+      applySetupProbe(provider, result);
+    } catch (error) {
+      setupDiscoveryProvider = null;
+      setSetupNote(error?.message || 'Modelle konnten nicht automatisch ermittelt werden.');
+    }
   };
 
   const enhanceOnboarding = () => {
-    const originalControl = document.getElementById('model-select');
-    if (!originalControl) return;
-    const provider = selectedSetupProvider() || 'ollama';
-    const label = originalControl.closest('.field');
-    if (!label || label.dataset.llmModelEnhanced === provider) return;
+    const provider = setupProvider();
+    if (!provider) {
+      setupDiscoveryProvider = null;
+      return;
+    }
 
-    const suggestions = modelSuggestions(originalControl);
-    const input = asModelInput(originalControl, {
-      id: 'model-select',
-      listId: 'setup-model-options',
-      suggestions: [...(provider === 'codex' ? ['default'] : []), ...suggestions],
-      placeholder: provider === 'ollama' ? 'Ollama-Modell auswählen' : 'default oder exakte Modell-ID',
-    });
-    if (!input) return;
+    const control = document.getElementById('model-select');
+    const cached = cache.get(provider);
+    if (!control) {
+      if (cached?.result && !cached.result.available) {
+        setSetupNote(cached.result.detail || `${providerName(provider)} ist momentan nicht bereit.`);
+      } else {
+        autoDiscoverSetup(provider);
+      }
+      return;
+    }
+    if (control.dataset.llmReady === provider) return;
 
-    label.dataset.llmModelEnhanced = provider;
-    const heading = label.querySelector('span');
-    if (heading) heading.textContent = 'LLM-Modell';
-    addHelp(
+    const label = control.closest('.field');
+    const card = control.closest('.setup-card');
+    if (!label || !card) return;
+    const result = cached?.result || {
+      available: true,
+      models: [...control.options].map(option => option.value).filter(Boolean),
+    };
+    let stored = control.value;
+    try { stored = stored || (typeof form !== 'undefined' ? form.model : ''); } catch (_) {}
+    const select = buildSelect(control, provider, result.models || [], stored, 'model-select');
+    select.dataset.llmReady = provider;
+    const heading = label.querySelector(':scope > span');
+    if (heading) heading.textContent = 'Verfügbares Modell';
+    ensureHelp(
       label,
       provider === 'ollama'
-        ? 'Die gefundenen lokalen Ollama-Modelle stehen als Vorschläge bereit.'
-        : 'Mit „default“ nutzt Codex seine Standardwahl. Für ein bestimmtes Modell trägst du dessen Modell-ID direkt ein.',
+        ? 'MAIL-AGENT hat die installierten Ollama-Modelle automatisch gefunden. Du musst nur auswählen.'
+        : 'MAIL-AGENT hat die Modelle des offiziellen Codex-Clients automatisch ermittelt. „Automatisch“ ist die bequemste Standardwahl.',
     );
-    input.addEventListener('input', () => {
-      try {
-        if (typeof form !== 'undefined') form.model = input.value.trim() || 'default';
-      } catch (_) {
-        // app.js remains the source of truth; saveVisible() reads the same field on navigation.
-      }
+    addManualFallback(label, select, provider, value => {
+      try { if (typeof form !== 'undefined') form.model = value; } catch (_) {}
     });
+    select.onchange = () => {
+      try { if (typeof form !== 'undefined') form.model = select.value; } catch (_) {}
+      setSetupNote(resultSummary(provider, result, select.value));
+    };
+    setSetupNote(
+      result.available
+        ? resultSummary(provider, result, select.value)
+        : (result.detail || `${providerName(provider)} ist momentan nicht bereit.`),
+    );
   };
 
   const enhance = () => {
