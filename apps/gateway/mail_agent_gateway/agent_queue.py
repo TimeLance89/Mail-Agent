@@ -11,6 +11,7 @@ class AgentWorkQueue:
     The old runtime first limited the newest messages and only then skipped already-processed rows. Once
     those newest rows were processed, older mail could starve forever. This queue filters processing state
     in SQL first, then applies the cycle limit, so every local backlog item eventually gets a turn.
+    Never-attempted mail is prioritized over retryable error rows so a provider outage cannot starve backlog.
     """
 
     def __init__(self, mail_store: MailStore):
@@ -31,7 +32,7 @@ class AgentWorkQueue:
                  AND p.message_id = COALESCE(NULLIF(m.remote_id, ''), NULLIF(m.internet_message_id, ''), CAST(m.uid AS TEXT))
                 WHERE m.mailbox_id=?
                   AND (p.status IS NULL OR p.status='error')
-                ORDER BY m.uid DESC
+                ORDER BY CASE WHEN p.status IS NULL THEN 0 ELSE 1 END ASC, m.uid DESC
                 LIMIT ?
                 """,
                 (mailbox_id, limit),
