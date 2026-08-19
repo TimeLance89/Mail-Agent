@@ -34,6 +34,7 @@ from .key_store import create_master_key_store
 from .mail_store import MailStore
 from .oauth_controller import OAuthController
 from .oauth_runtime import current_google_access_token, current_microsoft_access_token
+from .recovery import RecoveryManager
 from .registry_client import RegistryClient
 from .schemas import (
     AgentAnalyzeRequest,
@@ -52,6 +53,7 @@ from .schemas import (
     OAuthStartRequest,
     ProviderProbeRequest,
     RegistrationResponse,
+    RecoveryReconcileRequest,
     RuleSimulationRequest,
     ShadowReplayRequest,
     SyncRunRequest,
@@ -159,6 +161,15 @@ draft_service = DraftService(
     audit_log=audit_log,
     brain=agent_runtime.brain,
 )
+recovery_manager = RecoveryManager(
+    data_dir=settings.data_dir,
+    mail_store=mail_store,
+    identity_manager=identity_manager,
+    state_store=state_store,
+    vault=vault,
+    providers=providers,
+    mailbox_supplier=_configured_mailboxes,
+)
 
 
 async def _sync_mailbox(mailbox: dict, *, limit: int = 100) -> dict:
@@ -260,6 +271,9 @@ async def _sync_loop() -> None:
 @asynccontextmanager
 async def lifespan(_: FastAPI):
     task: asyncio.Task | None = None
+    recovered = recovery_manager.recover_stale_executions()
+    if recovered['outbound_uncertain'] or recovered['retryable_failed']:
+        audit_log.append('startup_execution_recovery', details=recovered)
     _sync_stop.clear()
     if settings.auto_sync_enabled:
         task = asyncio.create_task(_sync_loop(), name="mail-agent-mailbox-sync")
@@ -273,7 +287,7 @@ async def lifespan(_: FastAPI):
                 await task
 
 
-APP_VERSION = "0.11.0"
+APP_VERSION = "0.12.0"
 update_client = UpdateClient(
     feed_url=settings.update_feed_url,
     release_page=settings.update_release_page,
@@ -293,6 +307,33 @@ app.add_middleware(
 @app.get("/health")
 async def health() -> dict:
     return {"status": "ok", "service": "mail-agent-gateway", "version": APP_VERSION}
+
+
+@app.get("/v1/system/health")
+async def system_health() -> dict:
+    return await recovery_manager.report()
+
+
+@app.post("/v1/system/recovery/approvals/{approval_id}/reconcile")
+async def reconcile_uncertain_approval(
+    approval_id: str, body: RecoveryReconcileRequest
+) -> dict:
+    try:
+        approval = recovery_manager.reconcile_uncertain(approval_id, outcome=body.outcome)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Approval not found") from exc
+    except (RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit_log.append(
+        "uncertain_outbound_reconciled",
+        actor=body.actor,
+        details={
+            "approval_id": approval_id,
+            "outcome": body.outcome,
+            "action": approval.get("action"),
+        },
+    )
+    return approval
 
 
 @app.get("/v1/onboarding/status")
@@ -1115,8 +1156,16 @@ async def submit_draft(draft_id: str, body: DraftSubmitRequest) -> dict:
 async def list_approvals(status: str = "pending", limit: int = 100) -> dict:
     if status == "attention":
         pending = mail_store.list_approvals("pending", limit)
-        failed = [item for item in mail_store.list_approvals("approved", limit) if item.get("execution_status") == "failed"]
-        combined = sorted(pending + failed, key=lambda item: item.get("created_at") or "", reverse=True)
+        recoverable = [
+            item
+            for item in mail_store.list_approvals("approved", limit)
+            if item.get("execution_status") in {"failed", "uncertain", "ready"}
+        ]
+        combined = sorted(
+            pending + recoverable,
+            key=lambda item: item.get("created_at") or "",
+            reverse=True,
+        )
         return {"approvals": combined[:limit]}
     if status not in {"pending", "approved", "rejected"}:
         raise HTTPException(status_code=400, detail="Unsupported approval status")
