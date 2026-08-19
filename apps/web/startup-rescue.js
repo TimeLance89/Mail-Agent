@@ -3,23 +3,38 @@
   if (!appRoot) return;
 
   const BACKGROUND_WAIT_MS = 6000;
+  const SILENT_REFRESH_TTL_MS = 60000;
   let runtimeTask = null;
   let systemHealthTask = null;
+  let runtimeLastStartedAt = 0;
+  let systemHealthLastStartedAt = 0;
 
   const timeout = ms => new Promise(resolve => window.setTimeout(resolve, ms));
 
   function backgroundLoader(original, taskName) {
     return function nonBlockingLoader(silent = false) {
-      let task = taskName === 'runtime' ? runtimeTask : systemHealthTask;
+      const isRuntime = taskName === 'runtime';
+      let task = isRuntime ? runtimeTask : systemHealthTask;
+      const lastStartedAt = isRuntime ? runtimeLastStartedAt : systemHealthLastStartedAt;
+      const now = Date.now();
+
+      // The live dashboard polls every 15 seconds. Provider/model diagnostics are optional
+      // enrichment, so do not continuously spawn them when a previous result is still fresh.
+      if (silent && !task && lastStartedAt && now - lastStartedAt < SILENT_REFRESH_TTL_MS) {
+        return Promise.resolve();
+      }
+
       if (!task) {
+        if (isRuntime) runtimeLastStartedAt = now;
+        else systemHealthLastStartedAt = now;
         task = Promise.resolve()
           .then(() => original(true))
           .catch(() => undefined)
           .finally(() => {
-            if (taskName === 'runtime') runtimeTask = null;
+            if (isRuntime) runtimeTask = null;
             else systemHealthTask = null;
           });
-        if (taskName === 'runtime') runtimeTask = task;
+        if (isRuntime) runtimeTask = task;
         else systemHealthTask = task;
       }
 
