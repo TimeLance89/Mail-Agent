@@ -5,7 +5,13 @@ from typing import Literal
 from pydantic import BaseModel, Field
 
 from mail_agent_core.agent import MailMessageContext
-from mail_agent_core.models import AgentBehaviorSettings, AgentProfile
+from mail_agent_core.models import (
+    AgentBehaviorSettings,
+    AgentProfile,
+    MailActionType,
+    MailCategory,
+    MailPriority,
+)
 
 
 class IdentitySetupRequest(BaseModel):
@@ -57,6 +63,20 @@ class LearningDecisionRequest(BaseModel):
 class AgentRunRequest(BaseModel):
     mailbox_id: str | None = Field(default=None, max_length=128)
     force: bool = False
+
+
+class ShadowReplayRequest(BaseModel):
+    mailbox_id: str | None = Field(default=None, max_length=128)
+    limit: int = Field(default=25, ge=1, le=500)
+
+
+class RuleSimulationRequest(BaseModel):
+    sender: str = Field(min_length=1, max_length=320)
+    action: MailActionType
+    confidence: float = Field(default=0.9, ge=0.0, le=1.0)
+    priority: MailPriority = MailPriority.NORMAL
+    category: MailCategory = MailCategory.OTHER
+    needs_reply: bool = False
 
 
 class MailboxProbeRequest(BaseModel):
