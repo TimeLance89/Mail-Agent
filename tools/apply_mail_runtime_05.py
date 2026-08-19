@@ -23,13 +23,18 @@ def regex_once(path: str, pattern: str, replacement: str) -> None:
     target.write_text(updated, encoding="utf-8")
 
 
-# Gateway integration.
+def version_replace(path: str, old: str, new: str) -> None:
+    target = Path(path)
+    text = target.read_text(encoding="utf-8")
+    if new in text:
+        return
+    if old not in text:
+        raise SystemExit(f"Version marker missing in {path}: {old!r}")
+    target.write_text(text.replace(old, new, 1), encoding="utf-8")
+
+
 main = "apps/gateway/mail_agent_gateway/main.py"
-replace_once(
-    main,
-    "from .agent_runtime import AgentRuntime\n",
-    "from .action_executor import MailActionExecutor\nfrom .agent_runtime import AgentRuntime\n",
-)
+replace_once(main, "from .agent_runtime import AgentRuntime\n", "from .action_executor import MailActionExecutor\nfrom .agent_runtime import AgentRuntime\n")
 replace_once(
     main,
     "\n\nasync def _sync_mailbox(mailbox: dict, *, limit: int = 100) -> dict:\n",
@@ -49,12 +54,8 @@ action_executor = MailActionExecutor(
 async def _sync_mailbox(mailbox: dict, *, limit: int = 100) -> dict:
 """,
 )
-replace_once(main, 'APP_VERSION = "0.4.0"', 'APP_VERSION = "0.5.0"')
-replace_once(
-    main,
-    '            "send_requires_approval": True,\n',
-    '            "send_requires_approval": True,\n            "approved_send_executes_immediately": True,\n',
-)
+version_replace(main, 'APP_VERSION = "0.4.0"', 'APP_VERSION = "0.5.0"')
+replace_once(main, '            "send_requires_approval": True,\n', '            "send_requires_approval": True,\n            "approved_send_executes_immediately": True,\n')
 regex_once(
     main,
     r'@app\.get\("/v1/approvals"\)\nasync def list_approvals\(status: str = "pending", limit: int = 100\) -> dict:\n.*?(?=\n\n@app\.post\("/v1/approvals/\{approval_id\}/approve"\))',
@@ -62,11 +63,7 @@ regex_once(
 async def list_approvals(status: str = "pending", limit: int = 100) -> dict:
     if status == "attention":
         pending = mail_store.list_approvals("pending", limit)
-        failed = [
-            item
-            for item in mail_store.list_approvals("approved", limit)
-            if item.get("execution_status") == "failed"
-        ]
+        failed = [item for item in mail_store.list_approvals("approved", limit) if item.get("execution_status") == "failed"]
         combined = sorted(pending + failed, key=lambda item: item.get("created_at") or "", reverse=True)
         return {"approvals": combined[:limit]}
     if status not in {"pending", "approved", "rejected"}:
@@ -84,11 +81,7 @@ async def approve_action(approval_id: str, body: ApprovalDecisionRequest) -> dic
         raise HTTPException(status_code=404, detail="Approval not found") from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    audit_log.append(
-        "approval_approved",
-        actor=body.actor,
-        details={"approval_id": approval_id, "action": approval["action"]},
-    )
+    audit_log.append("approval_approved", actor=body.actor, details={"approval_id": approval_id, "action": approval["action"]})
     if approval.get("execution_status") == "ready":
         try:
             approval = await action_executor.execute_approval(approval_id)
@@ -107,21 +100,18 @@ async def execute_approved_action(approval_id: str) -> dict:
         raise HTTPException(status_code=409, detail=str(exc)) from exc''',
 )
 
-# Product version surfaces.
 for path, old, new in [
     ("pyproject.toml", 'version = "0.4.0"', 'version = "0.5.0"'),
     ("apps/launcher/mail_agent_launcher/main.py", 'APP_VERSION = "0.4.0"', 'APP_VERSION = "0.5.0"'),
     ("packaging/windows/MailAgent.iss", '#define MyAppVersion "0.4.0"', '#define MyAppVersion "0.5.0"'),
     ("packages/agent_core/mail_agent_core/identity.py", 'app_version: str = "0.4.0"', 'app_version: str = "0.5.0"'),
-    ("tests/test_update_api.py", 'assert result["current_version"] == "0.4.0"', 'assert result["current_version"] == "0.5.0"'),
 ]:
-    replace_once(path, old, new)
+    version_replace(path, old, new)
 
-# Web UI integration.
 app = "apps/web/app.js"
 text = Path(app).read_text(encoding="utf-8")
 text = text.replace("MAIL-AGENT v0.4.0", "MAIL-AGENT v0.5.0")
-text = text.replace("const current=updateStatus?.current_version||'0.3.0';", "const current=updateStatus?.current_version||'0.5.0';")
+text = re.sub(r"const current=updateStatus\?\.current_version\|\|'0\.[0-9]+\.0';", "const current=updateStatus?.current_version||'0.5.0';", text, count=1)
 Path(app).write_text(text, encoding="utf-8")
 
 regex_once(
@@ -144,16 +134,8 @@ function ruleRow(rule,index){const mode=rule.mode||'normal',priority=rule.priori
 function collectRuleRows(){return [...document.querySelectorAll('.rule-row')].map(row=>{const read=field=>row.querySelector(`[data-rule-field="${field}"]`)?.value?.trim()||'';const priority=read('priority'),category=read('category');return {pattern:read('pattern'),mode:read('mode')||'normal',priority:priority||null,category:category||null};}).filter(rule=>rule.pattern);}
 function renderAgentSettings(){''',
 )
-replace_once(
-    app,
-    "  const behavior=rs.behavior||{enabled:true,auto_analyze_new_mail:true,auto_create_drafts:true,minimum_confidence:.72,max_messages_per_cycle:20,active_days:[0,1,2,3,4,5,6],active_from:'00:00',active_until:'23:59',never_auto_act_senders:[]};",
-    "  const behavior=rs.behavior||{enabled:true,auto_analyze_new_mail:true,auto_create_drafts:true,minimum_confidence:.72,max_messages_per_cycle:20,thread_context_messages:8,active_days:[0,1,2,3,4,5,6],active_from:'00:00',active_until:'23:59',never_auto_act_senders:[],rules:[]};",
-)
-replace_once(
-    app,
-    "  const providerDetail=settingsProbe?.provider===provider?settingsProbe.detail:(catalog[provider]?.detail||'Noch nicht geprüft');\n",
-    "  const providerDetail=settingsProbe?.provider===provider?settingsProbe.detail:(catalog[provider]?.detail||'Noch nicht geprüft');\n  const ruleRows=(behavior.rules||[]).map(ruleRow).join('');\n",
-)
+replace_once(app, "  const behavior=rs.behavior||{enabled:true,auto_analyze_new_mail:true,auto_create_drafts:true,minimum_confidence:.72,max_messages_per_cycle:20,active_days:[0,1,2,3,4,5,6],active_from:'00:00',active_until:'23:59',never_auto_act_senders:[]};", "  const behavior=rs.behavior||{enabled:true,auto_analyze_new_mail:true,auto_create_drafts:true,minimum_confidence:.72,max_messages_per_cycle:20,thread_context_messages:8,active_days:[0,1,2,3,4,5,6],active_from:'00:00',active_until:'23:59',never_auto_act_senders:[],rules:[]};")
+replace_once(app, "  const providerDetail=settingsProbe?.provider===provider?settingsProbe.detail:(catalog[provider]?.detail||'Noch nicht geprüft');\n", "  const providerDetail=settingsProbe?.provider===provider?settingsProbe.detail:(catalog[provider]?.detail||'Noch nicht geprüft');\n  const ruleRows=(behavior.rules||[]).map(ruleRow).join('');\n")
 replace_once(
     app,
     '    <section class="panel"><div class="panel-head"><div><span>SICHERHEIT</span><h3>Unverhandelbare Grenzen</h3></div></div>',
@@ -175,21 +157,9 @@ function addRule(){if(!runtimeSettings)return;const rules=collectRuleRows();rule
 function removeRule(index){if(!runtimeSettings)return;const rules=collectRuleRows();rules.splice(Number(index),1);runtimeSettings.behavior={...(runtimeSettings.behavior||{}),rules};render();}
 ''',
 )
-replace_once(
-    app,
-    "  document.querySelectorAll('[data-reject]').forEach(el=>el.onclick=()=>decideApproval(el.dataset.reject,'reject'));\n",
-    "  document.querySelectorAll('[data-reject]').forEach(el=>el.onclick=()=>decideApproval(el.dataset.reject,'reject'));\n  document.querySelectorAll('[data-execute]').forEach(el=>el.onclick=()=>retryApproval(el.dataset.execute));\n",
-)
-replace_once(
-    app,
-    "  document.getElementById('settings-run-agent')?.addEventListener('click',runAgentNow);\n",
-    "  document.getElementById('settings-run-agent')?.addEventListener('click',runAgentNow);\n  document.getElementById('settings-add-rule')?.addEventListener('click',addRule);\n  document.querySelectorAll('[data-rule-remove]').forEach(el=>el.onclick=()=>removeRule(el.dataset.ruleRemove));\n",
-)
-replace_once(
-    app,
-    "dashboard.approvals=(await get('/v1/approvals?status=pending&limit=50')).approvals||[];",
-    "dashboard.approvals=(await get('/v1/approvals?status=attention&limit=50')).approvals||[];",
-)
+replace_once(app, "  document.querySelectorAll('[data-reject]').forEach(el=>el.onclick=()=>decideApproval(el.dataset.reject,'reject'));\n", "  document.querySelectorAll('[data-reject]').forEach(el=>el.onclick=()=>decideApproval(el.dataset.reject,'reject'));\n  document.querySelectorAll('[data-execute]').forEach(el=>el.onclick=()=>retryApproval(el.dataset.execute));\n")
+replace_once(app, "  document.getElementById('settings-run-agent')?.addEventListener('click',runAgentNow);\n", "  document.getElementById('settings-run-agent')?.addEventListener('click',runAgentNow);\n  document.getElementById('settings-add-rule')?.addEventListener('click',addRule);\n  document.querySelectorAll('[data-rule-remove]').forEach(el=>el.onclick=()=>removeRule(el.dataset.ruleRemove));\n")
+replace_once(app, "dashboard.approvals=(await get('/v1/approvals?status=pending&limit=50')).approvals||[];", "dashboard.approvals=(await get('/v1/approvals?status=attention&limit=50')).approvals||[];")
 replace_once(
     app,
     "async function decideApproval(id,decision){try{await post(`/v1/approvals/${encodeURIComponent(id)}/${decision}`,{actor:'local-user'});await loadDashboard(true);showNotice(decision==='approve'?'Aktion freigegeben.':'Aktion abgelehnt.');render();}catch(e){showNotice(e.message,'error')}}",
