@@ -26,6 +26,7 @@ ArchitecturesInstallIn64BitMode=x64compatible
 
 [Files]
 Source: "..\..\dist\Mail-Agent.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "restart-mail-agent.cmd"; DestDir: "{tmp}"; Flags: deleteafterinstall
 
 [Icons]
 Name: "{autoprograms}\MAIL-AGENT"; Filename: "{app}\{#MyAppExeName}"
@@ -35,5 +36,5 @@ Name: "{autodesktop}\MAIL-AGENT"; Filename: "{app}\{#MyAppExeName}"; Tasks: desk
 Name: "desktopicon"; Description: "Desktop-Verknüpfung erstellen"; GroupDescription: "Zusätzliche Verknüpfungen:"; Flags: unchecked
 
 [Run]
-Filename: "{app}\{#MyAppExeName}"; Description: "MAIL-AGENT jetzt starten"; Flags: nowait postinstall skipifsilent
-Filename: "{app}\{#MyAppExeName}"; Flags: nowait skipifnotsilent
+Filename: "{tmp}\restart-mail-agent.cmd"; Parameters: """{app}\{#MyAppExeName}"""; Description: "MAIL-AGENT jetzt starten"; Flags: runhidden postinstall skipifsilent
+Filename: "{tmp}\restart-mail-agent.cmd"; Parameters: """{app}\{#MyAppExeName}"""; Flags: runhidden skipifnotsilent
