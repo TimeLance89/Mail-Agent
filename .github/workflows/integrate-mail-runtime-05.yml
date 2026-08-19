@@ -1,0 +1,41 @@
+name: Integrate mail runtime 0.5
+
+permissions:
+  contents: write
+
+on:
+  push:
+    branches:
+      - feat/mail-runtime-0.5.0
+
+jobs:
+  integrate-and-test:
+    if: github.actor != 'github-actions[bot]'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/mail-runtime-0.5.0
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply gateway and UI integration
+        run: python tools/apply_mail_runtime_05.py
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Validate complete product branch
+        run: |
+          python -m pytest -q
+          python -m compileall -q apps packages connectors
+          node --check apps/web/app.js
+          git diff --check
+      - name: Persist validated integration
+        shell: bash
+        run: |
+          rm -f tools/apply_mail_runtime_05.py .github/workflows/integrate-mail-runtime-05.yml
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: wire approved delivery and mail intelligence"
+          git push origin HEAD:feat/mail-runtime-0.5.0
