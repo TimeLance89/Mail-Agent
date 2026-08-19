@@ -88,12 +88,12 @@ def test_restart_helper_accepts_only_expected_healthy_version(tmp_path: Path):
     # The helper only needs an executable target for this integration test. The synthetic health
     # server represents the newly started packaged gateway and lets CI exercise the real CMD +
     # Windows PowerShell health/version verification path.
-    command_line = (
-        f'""{RESTART_HELPER}" "{sys.executable}" "0.13.6" "no-browser""'
+    command_line = subprocess.list2cmdline(
+        [str(RESTART_HELPER), str(sys.executable), "0.13.6", "no-browser"]
     )
     try:
         result = subprocess.run(
-            ["cmd.exe", "/d", "/s", "/c", command_line],
+            [os.environ.get("COMSPEC", "cmd.exe"), "/d", "/c", command_line],
             env=env,
             capture_output=True,
             text=True,
