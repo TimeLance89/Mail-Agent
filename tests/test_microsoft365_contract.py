@@ -31,12 +31,15 @@ def test_microsoft365_is_first_class_gateway_connector():
 
 def test_microsoft365_onboarding_is_visible_and_not_a_placeholder():
     app = (ROOT / "apps/web/app.js").read_text(encoding="utf-8")
+    desktop = (ROOT / "apps/web/desktop-links.js").read_text(encoding="utf-8")
+    index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
     assert "id=\"microsoft-connect\"" in app
     assert "connectMicrosoft" in app
     assert "/v1/oauth/microsoft/start" in app
     assert "mailboxConnector='microsoft_graph'" in app
     assert "OAuth-Anmeldung folgt als nächster Connector" not in app
-    assert f"MAIL-AGENT v{_project_version()}" in app
+    assert f"const APP_VERSION = '{_project_version()}'" in desktop
+    assert "/assets/desktop-links.js" in index
 
 
 def test_microsoft_well_known_folders_resolve_without_network():
