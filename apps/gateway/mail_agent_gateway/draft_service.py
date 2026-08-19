@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from mail_agent_core.brain import AgentBrain
 from mail_agent_core.identity import IdentityManager
 from mail_agent_core.models import AgentProfile, MailActionProposal, MailActionType
 from mail_agent_core.policy import PolicyEngine
@@ -21,12 +22,14 @@ class DraftService:
         state_store: JsonStateStore,
         policy_engine: PolicyEngine,
         audit_log: AuditLog,
+        brain: AgentBrain | None = None,
     ) -> None:
         self.mail_store = mail_store
         self.identity_manager = identity_manager
         self.state_store = state_store
         self.policy_engine = policy_engine
         self.audit_log = audit_log
+        self.brain = brain
 
     def _profile(self) -> AgentProfile:
         state = self.state_store.read()
@@ -65,6 +68,8 @@ class DraftService:
                 raise RuntimeError("Reply recipient cannot differ from the original sender")
             requested_recipient = authoritative
 
+        before_subject = str(proposal.subject or "")
+        before_body = strip_agent_signature(str(proposal.body or ""))
         clean_body = strip_agent_signature(body)
         if not clean_body.strip():
             raise ValueError("Draft body cannot be empty")
@@ -81,6 +86,24 @@ class DraftService:
             user_signature=profile.email_signature,
         )
         updated = self.mail_store.update_draft(draft_id, proposal, actor=actor)
+
+        feedback_recorded = False
+        if self.brain is not None and (
+            before_subject.strip() != subject.strip() or before_body.strip() != clean_body.strip()
+        ):
+            self.brain.ensure(identity, profile)
+            self.brain.record_owner_edit(
+                draft_id=draft_id,
+                mailbox_id=proposal.mailbox_id,
+                message_id=proposal.message_id,
+                sender=str(source.get("sender") or "") if source else None,
+                before_subject=before_subject,
+                before_body=before_body,
+                after_subject=subject.strip(),
+                after_body=clean_body,
+            )
+            feedback_recorded = True
+
         self.audit_log.append(
             "draft_edited_and_resigned",
             actor=actor,
@@ -88,6 +111,7 @@ class DraftService:
                 "draft_id": draft_id,
                 "revision": updated.get("revision"),
                 "agent_id": identity.agent_id,
+                "owner_feedback_recorded": feedback_recorded,
             },
         )
         return self.public_draft(updated)
