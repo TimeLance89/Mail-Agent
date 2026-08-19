@@ -109,8 +109,10 @@ def _thread_seed(
     ids = re.findall(r"<[^>]+>", references + " " + in_reply_to)
     if ids:
         return ids[0].lower()
+    if message_id:
+        return message_id.strip().lower()
     normalized_subject = re.sub(r"^(?:(?:re|fw|fwd):\s*)+", "", subject, flags=re.I).strip().lower()
-    return f"{normalized_subject}|{sender.lower()}|{message_id or ''}"
+    return f"{normalized_subject}|{sender.lower()}"
 
 
 def _parse_date(message: Message) -> str | None:

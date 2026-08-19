@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from datetime import datetime
 
-from .models import AgentBehaviorSettings
+from .models import AgentBehaviorSettings, AgentRule, MailCategory, MailPriority, RuleMode
 
 
 def _minutes(value: str) -> int:
@@ -27,3 +27,28 @@ def behavior_is_active(settings: AgentBehaviorSettings, now: datetime | None = N
 def sender_matches(sender: str, candidates: list[str]) -> bool:
     value = sender.strip().lower()
     return any(candidate in value for candidate in candidates)
+
+
+def matching_rule(sender: str, settings: AgentBehaviorSettings) -> AgentRule | None:
+    value = sender.strip().lower()
+    for rule in settings.rules:
+        if rule.pattern in value:
+            return rule
+    return None
+
+
+def apply_rule_overrides(
+    *,
+    sender: str,
+    settings: AgentBehaviorSettings,
+    priority: MailPriority,
+    category: MailCategory,
+) -> tuple[RuleMode, MailPriority, MailCategory]:
+    rule = matching_rule(sender, settings)
+    if rule is None:
+        if sender_matches(sender, settings.never_auto_act_senders):
+            return RuleMode.ANALYZE_ONLY, priority, category
+        if sender_matches(sender, settings.vip_senders) and priority in {MailPriority.NORMAL, MailPriority.LOW}:
+            priority = MailPriority.HIGH
+        return RuleMode.NORMAL, priority, category
+    return rule.mode, rule.priority or priority, rule.category or category

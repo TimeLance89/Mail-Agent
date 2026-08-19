@@ -33,6 +33,44 @@ class MailActionType(StrEnum):
     FORWARD = "forward"
 
 
+class MailPriority(StrEnum):
+    URGENT = "urgent"
+    HIGH = "high"
+    NORMAL = "normal"
+    LOW = "low"
+
+
+class MailCategory(StrEnum):
+    PERSONAL = "personal"
+    WORK = "work"
+    FINANCE = "finance"
+    SUPPORT = "support"
+    SALES = "sales"
+    NEWSLETTER = "newsletter"
+    NOTIFICATION = "notification"
+    SECURITY = "security"
+    OTHER = "other"
+
+
+class RuleMode(StrEnum):
+    NORMAL = "normal"
+    ANALYZE_ONLY = "analyze_only"
+    DRAFT_ONLY = "draft_only"
+    IGNORE = "ignore"
+
+
+class AgentRule(BaseModel):
+    pattern: str = Field(min_length=1, max_length=320)
+    mode: RuleMode = RuleMode.NORMAL
+    priority: MailPriority | None = None
+    category: MailCategory | None = None
+
+    @field_validator("pattern")
+    @classmethod
+    def normalize_pattern(cls, value: str) -> str:
+        return value.strip().lower()
+
+
 class AgentProfile(BaseModel):
     owner_id: str = Field(min_length=1, max_length=200)
     agent_name: str = Field(min_length=1, max_length=80)
@@ -54,11 +92,13 @@ class AgentBehaviorSettings(BaseModel):
     auto_archive_low_priority: bool = False
     minimum_confidence: float = Field(default=0.72, ge=0.0, le=1.0)
     max_messages_per_cycle: int = Field(default=20, ge=1, le=200)
+    thread_context_messages: int = Field(default=8, ge=0, le=30)
     active_days: list[int] = Field(default_factory=lambda: [0, 1, 2, 3, 4, 5, 6])
     active_from: str = Field(default="00:00", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     active_until: str = Field(default="23:59", pattern=r"^([01]\d|2[0-3]):[0-5]\d$")
     vip_senders: list[str] = Field(default_factory=list)
     never_auto_act_senders: list[str] = Field(default_factory=list)
+    rules: list[AgentRule] = Field(default_factory=list)
 
     @field_validator("active_days")
     @classmethod
@@ -85,6 +125,10 @@ class MailActionProposal(BaseModel):
     destination_folder: str | None = None
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     reason: str = ""
+    summary: str = Field(default="", max_length=1200)
+    priority: MailPriority = MailPriority.NORMAL
+    category: MailCategory = MailCategory.OTHER
+    needs_reply: bool = False
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

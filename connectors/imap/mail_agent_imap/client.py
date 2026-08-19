@@ -89,13 +89,25 @@ class SmtpSender:
             smtp.login(self.config.username, self.config.password)
             smtp.noop()
 
-    def send(self, *, to: str, subject: str, body: str) -> None:
+    def send(
+        self,
+        *,
+        to: str,
+        subject: str,
+        body: str,
+        in_reply_to: str | None = None,
+        references: str | None = None,
+    ) -> None:
         if not self.config.smtp_host:
             raise ValueError("SMTP host is not configured")
         message = EmailMessage()
         message["From"] = self.config.email_address
         message["To"] = to
         message["Subject"] = subject
+        if in_reply_to:
+            message["In-Reply-To"] = in_reply_to
+        if references:
+            message["References"] = references
         message.set_content(body)
         with smtplib.SMTP_SSL(self.config.smtp_host, self.config.smtp_port) as smtp:
             smtp.login(self.config.username, self.config.password)

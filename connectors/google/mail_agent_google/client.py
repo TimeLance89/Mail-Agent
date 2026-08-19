@@ -6,6 +6,7 @@ import secrets
 import time
 from dataclasses import dataclass
 from email import policy
+from email.message import EmailMessage
 from email.parser import BytesParser
 from urllib.parse import urlencode
 
@@ -171,6 +172,35 @@ class GoogleGmailClient:
             params["pageToken"] = page_token
         async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers) as client:
             response = await client.get(f"{GMAIL_API}/users/me/history", params=params)
+            response.raise_for_status()
+            return response.json()
+
+    async def send_message(
+        self,
+        *,
+        from_address: str,
+        to: str,
+        subject: str,
+        body: str,
+        thread_id: str | None = None,
+        in_reply_to: str | None = None,
+        references: str | None = None,
+    ) -> dict:
+        message = EmailMessage()
+        message["From"] = from_address
+        message["To"] = to
+        message["Subject"] = subject
+        if in_reply_to:
+            message["In-Reply-To"] = in_reply_to
+        if references:
+            message["References"] = references
+        message.set_content(body)
+        raw = base64.urlsafe_b64encode(message.as_bytes()).rstrip(b"=").decode("ascii")
+        payload: dict[str, str] = {"raw": raw}
+        if thread_id:
+            payload["threadId"] = thread_id
+        async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers) as client:
+            response = await client.post(f"{GMAIL_API}/users/me/messages/send", json=payload)
             response.raise_for_status()
             return response.json()
 
