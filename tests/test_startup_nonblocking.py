@@ -9,6 +9,8 @@ import pytest
 
 ROOT = Path(__file__).resolve().parents[1]
 STARTUP_GUARD = ROOT / "apps/web/startup-rescue.js"
+DASHBOARD_LIVE = ROOT / "apps/web/dashboard-live.js"
+DESKTOP_LINKS = ROOT / "apps/web/desktop-links.js"
 
 
 def test_static_startup_shell_is_present_before_javascript_boot():
@@ -20,12 +22,12 @@ def test_static_startup_shell_is_present_before_javascript_boot():
 
 def test_startup_guard_runs_immediately_after_main_app():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
-    assert "/assets/startup-rescue.js?v=0.13.3" in index
-    assert index.index("/assets/app.js?v=0.13.3") < index.index(
-        "/assets/startup-rescue.js?v=0.13.3"
+    assert "/assets/startup-rescue.js?v=0.13.4" in index
+    assert index.index("/assets/app.js?v=0.13.4") < index.index(
+        "/assets/startup-rescue.js?v=0.13.4"
     )
-    assert index.index("/assets/startup-rescue.js?v=0.13.3") < index.index(
-        "/assets/llm-model-settings-v2.js?v=0.13.3"
+    assert index.index("/assets/startup-rescue.js?v=0.13.4") < index.index(
+        "/assets/llm-model-settings-v2.js?v=0.13.4"
     )
 
 
@@ -40,7 +42,7 @@ def test_every_web_asset_is_cache_busted_for_the_hotfix():
         "dashboard-live.js",
         "desktop-links.js",
     ):
-        assert f"/assets/{asset}?v=0.13.3" in index
+        assert f"/assets/{asset}?v=0.13.4" in index
 
 
 def test_installed_dashboard_can_render_before_optional_provider_enrichment_finishes():
@@ -63,8 +65,8 @@ def test_bootstrap_status_has_independent_hard_timeout_and_visible_failure_state
     assert "fetchJsonWithTimeout('/v1/onboarding/status')" in source
     assert "hydrateBootstrapStatus(status)" in source
     assert "showBootstrapFailure(error)" in source
-    assert 'startup-retry' in source
-    assert 'startup-open-status' in source
+    assert "startup-retry" in source
+    assert "startup-open-status" in source
     assert "Du musst nicht weiter warten" in source
 
 
@@ -74,14 +76,27 @@ def test_oauth_provider_status_is_optional_bootstrap_enrichment():
     assert ".catch(() => undefined)" in source
 
 
+def test_ui_observers_cannot_recurse_on_their_own_dom_updates():
+    dashboard = DASHBOARD_LIVE.read_text(encoding="utf-8")
+    desktop = DESKTOP_LINKS.read_text(encoding="utf-8")
+
+    assert "observer.observe(appRoot, { childList: true });" in dashboard
+    assert "observer.observe(app, { childList: true });" in desktop
+    assert "subtree: true" not in dashboard
+    assert "subtree: true" not in desktop
+    assert "if (kicker.textContent !== text) kicker.textContent = text;" in dashboard
+    assert "if (footer && footer.textContent !== text) footer.textContent = text;" in desktop
+
+
 def test_startup_guard_javascript_syntax():
     node = shutil.which("node")
     if not node:
         pytest.skip("Node.js is not available")
-    result = subprocess.run(
-        [node, "--check", str(STARTUP_GUARD)],
-        capture_output=True,
-        text=True,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr
+    for source in (STARTUP_GUARD, DASHBOARD_LIVE, DESKTOP_LINKS):
+        result = subprocess.run(
+            [node, "--check", str(source)],
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+        assert result.returncode == 0, result.stderr
