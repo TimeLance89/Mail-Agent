@@ -354,15 +354,16 @@ class MailActionExecutor:
                     "remote_id": payload.get("id"),
                     "thread_id": payload.get("conversationId") or source.get("remote_thread_id"),
                 }
-            await client.send_mail(
-                to=proposal.recipient or "",
+            payload = await client.send_forward(
+                source_message_id=remote_id,
+                recipient=proposal.recipient or "",
                 subject=subject,
                 body=proposal.body or "",
             )
             return {
                 "connector": "microsoft_graph",
-                "remote_id": None,
-                "thread_id": source.get("remote_thread_id") or source.get("thread_key"),
+                "remote_id": payload.get("id"),
+                "thread_id": payload.get("conversationId") or source.get("remote_thread_id"),
             }
 
         if connector not in {"imap", "smtp", ""}:
