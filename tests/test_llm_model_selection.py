@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import json
 import shutil
 import subprocess
 from pathlib import Path
@@ -20,15 +21,19 @@ def test_llm_model_selector_is_loaded_after_main_app():
     assert index.index("/assets/llm-model-settings.js") < index.index("/assets/dashboard-live.js")
 
 
-def test_model_selector_supports_settings_onboarding_and_provider_refresh():
+def test_model_selector_auto_discovers_settings_and_onboarding_models():
     source = (ROOT / "apps/web/llm-model-settings.js").read_text(encoding="utf-8")
     assert "settings-model" in source
     assert "model-select" in source
     assert "/v1/providers/probe" in source
-    assert "settings-refresh-models" in source
-    assert "datalist" in source
-    assert "default" in source
-    assert "konkrete, von deinem ChatGPT/Codex-Zugang unterstützte Modell-ID" in source
+    assert "autoDiscoverSettings" in source
+    assert "autoDiscoverSetup" in source
+    assert "Modelle neu erkennen" in source
+    assert "Automatisch (Codex-Standard)" in source
+    assert "Expertenoption: andere Modell-ID" in source
+    assert "document.createElement('select')" in source
+    assert "datalist" not in source.lower()
+    assert "gpt-5" not in source.lower()
 
 
 def test_existing_app_persists_selected_model():
@@ -50,6 +55,64 @@ def test_llm_model_selector_javascript_syntax():
         check=False,
     )
     assert result.returncode == 0, result.stderr
+
+
+def _catalog(*models: dict) -> bytes:
+    return json.dumps({"models": list(models)}).encode()
+
+
+@pytest.mark.asyncio
+async def test_codex_discovers_visible_models_from_official_cli(monkeypatch):
+    monkeypatch.setattr("mail_agent_core.providers.shutil.which", lambda _: "/fake/codex")
+    monkeypatch.setattr("mail_agent_core.providers._hidden_process_creationflags", lambda: 0x08000000)
+
+    proc = Mock(returncode=0)
+    proc.communicate = AsyncMock(
+        return_value=(
+            _catalog(
+                {"slug": "model-a", "display_name": "Model A", "visibility": "list"},
+                {"slug": "model-b", "display_name": "Model B", "visibility": "list"},
+                {"slug": "internal-model", "visibility": "hide"},
+                {"slug": "model-a", "visibility": "list"},
+            ),
+            b"",
+        )
+    )
+    create = AsyncMock(return_value=proc)
+    monkeypatch.setattr("mail_agent_core.providers.asyncio.create_subprocess_exec", create)
+
+    models = await CodexCliProvider("codex").list_models()
+
+    assert models == ["model-a", "model-b"]
+    assert create.call_args.args == ("/fake/codex", "debug", "models")
+    assert create.call_args.kwargs["creationflags"] == 0x08000000
+
+
+@pytest.mark.asyncio
+async def test_codex_model_discovery_falls_back_to_bundled_catalog(monkeypatch):
+    monkeypatch.setattr("mail_agent_core.providers.shutil.which", lambda _: "/fake/codex")
+    monkeypatch.setattr("mail_agent_core.providers._hidden_process_creationflags", lambda: 0)
+
+    failed = Mock(returncode=1)
+    failed.communicate = AsyncMock(return_value=(b"", b"refresh failed"))
+    bundled = Mock(returncode=0)
+    bundled.communicate = AsyncMock(
+        return_value=(_catalog({"slug": "bundled-model", "visibility": "list"}), b"")
+    )
+    create = AsyncMock(side_effect=[failed, bundled])
+    monkeypatch.setattr("mail_agent_core.providers.asyncio.create_subprocess_exec", create)
+
+    models = await CodexCliProvider("codex").list_models()
+
+    assert models == ["bundled-model"]
+    assert create.await_args_list[0].args == ("/fake/codex", "debug", "models")
+    assert create.await_args_list[1].args == ("/fake/codex", "debug", "models", "--bundled")
+
+
+@pytest.mark.asyncio
+async def test_codex_model_discovery_returns_empty_when_cli_is_missing(monkeypatch):
+    monkeypatch.setattr("mail_agent_core.providers.shutil.which", lambda _: None)
+    assert await CodexCliProvider("codex").list_models() == []
 
 
 @pytest.mark.asyncio
