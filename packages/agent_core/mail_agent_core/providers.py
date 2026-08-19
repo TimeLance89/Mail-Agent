@@ -27,6 +27,20 @@ class ProviderHealth:
     detail: str
 
 
+def _hidden_process_creationflags(platform_name: str | None = None) -> int:
+    """Return flags that keep internal CLI helpers invisible on Windows.
+
+    MAIL-AGENT is a GUI application. Provider health checks and model executions may use npm
+    `.cmd` wrappers, which route through cmd.exe on Windows. Without CREATE_NO_WINDOW each call can
+    flash a console window even though the parent executable itself is windowless.
+    """
+
+    platform_name = platform_name or os.name
+    if platform_name != "nt":
+        return 0
+    return getattr(subprocess, "CREATE_NO_WINDOW", 0)
+
+
 class LLMProvider(ABC):
     name: str
 
@@ -112,6 +126,7 @@ class CodexCliProvider(LLMProvider):
                 *command,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE,
+                creationflags=_hidden_process_creationflags(),
             )
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5)
             detail = (stdout or stderr).decode(errors="replace").strip()
@@ -126,13 +141,10 @@ class CodexCliProvider(LLMProvider):
 
     def start_chatgpt_login(self) -> str:
         command = self._command("--login")
-        creationflags = 0
-        if os.name == "nt":
-            creationflags = getattr(subprocess, "CREATE_NEW_PROCESS_GROUP", 0)
         subprocess.Popen(
             command,
             close_fds=True,
-            creationflags=creationflags,
+            creationflags=_hidden_process_creationflags(),
         )
         return "Offizieller ChatGPT-Login wurde im Codex-Client gestartet"
 
@@ -157,6 +169,7 @@ class CodexCliProvider(LLMProvider):
             *command,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
+            creationflags=_hidden_process_creationflags(),
         )
         stdout, stderr = await proc.communicate()
         if proc.returncode != 0:
