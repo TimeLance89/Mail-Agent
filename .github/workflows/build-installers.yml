@@ -32,21 +32,31 @@ jobs:
           from pathlib import Path
 
           version = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
-          launcher = Path("apps/launcher/mail_agent_launcher/main.py")
-          text = launcher.read_text(encoding="utf-8")
-          text, count = re.subn(
-              r'^APP_VERSION = "[^"]+"$',
-              f'APP_VERSION = "{version}"',
-              text,
-              count=1,
-              flags=re.MULTILINE,
-          )
-          if count != 1:
-              raise SystemExit("Could not synchronize launcher APP_VERSION")
-          launcher.write_text(text, encoding="utf-8")
+          for target_name in (
+              "apps/launcher/mail_agent_launcher/main.py",
+              "apps/gateway/mail_agent_gateway/main.py",
+          ):
+              target = Path(target_name)
+              text = target.read_text(encoding="utf-8")
+              text, count = re.subn(
+                  r'^APP_VERSION = "[^"]+"$',
+                  f'APP_VERSION = "{version}"',
+                  text,
+                  count=1,
+                  flags=re.MULTILINE,
+              )
+              if count != 1:
+                  raise SystemExit(f"Could not synchronize APP_VERSION in {target_name}")
+              target.write_text(text, encoding="utf-8")
           installer = Path("packaging/windows/MailAgent.iss").read_text(encoding="utf-8")
           if f'#define MyAppVersion "{version}"' not in installer:
               raise SystemExit("Windows installer version does not match pyproject.toml")
+          identity = Path("packages/agent_core/mail_agent_core/identity.py").read_text(encoding="utf-8")
+          if f'app_version: str = "{version}"' not in identity:
+              raise SystemExit("Agent identity version does not match pyproject.toml")
+          desktop = Path("apps/web/desktop-links.js").read_text(encoding="utf-8")
+          if f"const APP_VERSION = '{version}'" not in desktop:
+              raise SystemExit("Desktop UI version does not match pyproject.toml")
           print(f"Packaging MAIL-AGENT {version}")
       - name: Embed OAuth desktop client overrides
         shell: python
@@ -103,6 +113,7 @@ jobs:
         run: |
           python -m compileall -q apps packages connectors tests
           node --check apps/web/app.js
+          node --check apps/web/llm-model-settings-v2.js
           node --check apps/web/desktop-links.js
           git diff --check
       - name: Build standalone app
@@ -267,18 +278,28 @@ jobs:
           from pathlib import Path
 
           version = tomllib.loads(Path("pyproject.toml").read_text(encoding="utf-8"))["project"]["version"]
-          launcher = Path("apps/launcher/mail_agent_launcher/main.py")
-          text = launcher.read_text(encoding="utf-8")
-          text, count = re.subn(
-              r'^APP_VERSION = "[^"]+"$',
-              f'APP_VERSION = "{version}"',
-              text,
-              count=1,
-              flags=re.MULTILINE,
-          )
-          if count != 1:
-              raise SystemExit("Could not synchronize launcher APP_VERSION")
-          launcher.write_text(text, encoding="utf-8")
+          for target_name in (
+              "apps/launcher/mail_agent_launcher/main.py",
+              "apps/gateway/mail_agent_gateway/main.py",
+          ):
+              target = Path(target_name)
+              text = target.read_text(encoding="utf-8")
+              text, count = re.subn(
+                  r'^APP_VERSION = "[^"]+"$',
+                  f'APP_VERSION = "{version}"',
+                  text,
+                  count=1,
+                  flags=re.MULTILINE,
+              )
+              if count != 1:
+                  raise SystemExit(f"Could not synchronize APP_VERSION in {target_name}")
+              target.write_text(text, encoding="utf-8")
+          identity = Path("packages/agent_core/mail_agent_core/identity.py").read_text(encoding="utf-8")
+          if f'app_version: str = "{version}"' not in identity:
+              raise SystemExit("Agent identity version does not match pyproject.toml")
+          desktop = Path("apps/web/desktop-links.js").read_text(encoding="utf-8")
+          if f"const APP_VERSION = '{version}'" not in desktop:
+              raise SystemExit("Desktop UI version does not match pyproject.toml")
           print(f"Packaging MAIL-AGENT {version}")
       - name: Embed OAuth desktop client overrides
         env:
@@ -336,6 +357,7 @@ jobs:
         run: |
           python -m compileall -q apps packages connectors tests
           node --check apps/web/app.js
+          node --check apps/web/llm-model-settings-v2.js
           node --check apps/web/desktop-links.js
           git diff --check
       - name: Build standalone app
