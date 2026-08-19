@@ -6,8 +6,10 @@ import os
 import subprocess
 import threading
 import time
+import uuid
 from contextlib import asynccontextmanager, suppress
 from dataclasses import asdict
+from datetime import UTC, datetime
 from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
@@ -50,6 +52,8 @@ from .schemas import (
     OAuthStartRequest,
     ProviderProbeRequest,
     RegistrationResponse,
+    RuleSimulationRequest,
+    ShadowReplayRequest,
     SyncRunRequest,
 )
 from .settings import settings
@@ -81,6 +85,7 @@ providers = {
     "codex": CodexCliProvider(settings.codex_binary),
 }
 _sync_stop = asyncio.Event()
+_shadow_jobs: dict[str, dict] = {}
 
 
 def _mailbox_id(email_address: str, imap_host: str) -> str:
@@ -252,7 +257,7 @@ async def lifespan(_: FastAPI):
                 await task
 
 
-APP_VERSION = "0.9.0"
+APP_VERSION = "0.10.0"
 update_client = UpdateClient(
     feed_url=settings.update_feed_url,
     release_page=settings.update_release_page,
@@ -646,6 +651,8 @@ async def _settings_payload() -> dict:
         "providers": catalog,
         "invariants": {
             "agent_identity_required": True,
+            "shadow_side_effects_forbidden": True,
+            "shadow_uses_separate_processing_queue": True,
             "agent_signature_required": True,
             "agent_signature_removable": False,
             "send_requires_approval": True,
@@ -754,6 +761,140 @@ async def get_agent_activity(limit: int = 50, mailbox_id: str | None = None) -> 
         "traces": agent_runtime.activity.recent_traces(limit, mailbox_id=mailbox_id),
         "summary": agent_runtime.activity.summary(mailbox_id=mailbox_id),
     }
+
+
+def _public_shadow_job(job: dict) -> dict:
+    return {
+        key: value
+        for key, value in job.items()
+        if not key.startswith("_") and key != "report"
+    }
+
+
+def _shadow_payload() -> dict:
+    _state, config = _configuration_or_409()
+    behavior = AgentBehaviorSettings.model_validate(config.get("behavior") or {})
+    mailboxes = []
+    for mailbox in _configured_mailboxes():
+        mailbox_id = str(mailbox.get("mailbox_id") or "")
+        if not mailbox_id:
+            continue
+        status = agent_runtime.mailbox_status(mailbox_id)
+        status["email_address"] = mailbox.get("email_address")
+        mailboxes.append(status)
+    jobs = sorted(
+        (_public_shadow_job(item) for item in _shadow_jobs.values()),
+        key=lambda item: str(item.get("started_at") or ""),
+        reverse=True,
+    )[:20]
+    return {
+        "execution_mode": behavior.execution_mode.value,
+        "side_effects_allowed": False,
+        "mailboxes": mailboxes,
+        "jobs": jobs,
+        "reports": agent_runtime.shadow_reports.recent_reports(10),
+    }
+
+
+async def _run_shadow_replay_job(job_id: str, mailbox_id: str, limit: int) -> None:
+    job = _shadow_jobs[job_id]
+    job["status"] = "running"
+
+    def progress(done: int, total: int) -> None:
+        job["completed"] = done
+        job["total"] = total
+
+    try:
+        report = await agent_runtime.shadow_replay(
+            mailbox_id,
+            limit=limit,
+            progress=progress,
+        )
+        job["status"] = "completed"
+        job["completed"] = report.get("analyzed", 0) + report.get("errors", 0)
+        job["total"] = len(report.get("results") or [])
+        job["report"] = report
+    except Exception as exc:
+        job["status"] = "failed"
+        job["error"] = str(exc)
+        audit_log.append(
+            "agent_shadow_replay_failed",
+            details={"job_id": job_id, "mailbox_id": mailbox_id, "error": str(exc)},
+        )
+
+
+@app.get("/v1/agent/shadow")
+async def get_shadow_status() -> dict:
+    return _shadow_payload()
+
+
+@app.get("/v1/agent/shadow/jobs/{job_id}")
+async def get_shadow_job(job_id: str) -> dict:
+    _configuration_or_409()
+    job = _shadow_jobs.get(job_id)
+    if job is None:
+        raise HTTPException(status_code=404, detail="Shadow replay job not found")
+    return _public_shadow_job(job)
+
+
+@app.post("/v1/agent/shadow/replay")
+async def start_shadow_replay(body: ShadowReplayRequest) -> dict:
+    _configuration_or_409()
+    mailbox_id = body.mailbox_id
+    if not mailbox_id:
+        configured = _configured_mailboxes()
+        if not configured:
+            raise HTTPException(status_code=409, detail="No mailbox is configured")
+        mailbox_id = configured[0]["mailbox_id"]
+    try:
+        _mailbox_by_id(mailbox_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail=f"Unknown mailbox: {mailbox_id}") from exc
+    active = next(
+        (
+            item
+            for item in _shadow_jobs.values()
+            if item.get("mailbox_id") == mailbox_id
+            and item.get("status") in {"queued", "running"}
+        ),
+        None,
+    )
+    if active is not None:
+        raise HTTPException(status_code=409, detail="A Shadow replay is already running for this mailbox")
+    job_id = "shadow_job_" + uuid.uuid4().hex
+    job = {
+        "job_id": job_id,
+        "mailbox_id": mailbox_id,
+        "status": "queued",
+        "requested": body.limit,
+        "completed": 0,
+        "total": body.limit,
+        "started_at": datetime.now(UTC).isoformat(),
+        "side_effects": 0,
+    }
+    _shadow_jobs[job_id] = job
+    job["_task"] = asyncio.create_task(
+        _run_shadow_replay_job(job_id, mailbox_id, body.limit),
+        name=f"mail-agent-shadow-{job_id[-8:]}",
+    )
+    audit_log.append(
+        "agent_shadow_replay_started",
+        details={"job_id": job_id, "mailbox_id": mailbox_id, "limit": body.limit},
+    )
+    return _public_shadow_job(job)
+
+
+@app.post("/v1/agent/rules/simulate")
+async def simulate_agent_rule(body: RuleSimulationRequest) -> dict:
+    _configuration_or_409()
+    return agent_runtime.simulate_rule(
+        sender=body.sender,
+        action=body.action,
+        confidence=body.confidence,
+        priority=body.priority,
+        category=body.category,
+        needs_reply=body.needs_reply,
+    )
 
 
 @app.put("/v1/agent/brain")

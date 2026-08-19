@@ -14,6 +14,9 @@ let updateLoading = false;
 let runtimeSettings = null;
 let brainStatus = null;
 let brainLoading = false;
+let shadowStatus = null;
+let shadowLoading = false;
+let ruleSimulation = null;
 let settingsProbe = null;
 let editingDraftId = null;
 let mailboxConnector = null;
@@ -72,7 +75,7 @@ function stepper() {
   return `<div class="setup-stepper">${onboardingSteps.map((label, i) => `<div class="setup-dot ${i < step ? 'done' : ''} ${i === step ? 'active' : ''}"><span>${i < step ? icon('check',13) : i+1}</span><small>${label}</small></div>`).join('')}</div>`;
 }
 function setupLayout(content) {
-  return `<main class="setup-page"><section class="setup-aside">${brand()}<div class="setup-aside-copy"><span class="kicker">SETUP IN WENIGEN MINUTEN</span><h1>Dein Postfach.<br><em>Dein Agent.</em></h1><p>MAIL-AGENT arbeitet lokal, kontrolliert und ausschließlich für E-Mail.</p></div><div class="trust-pill">${icon('shield',18)}<span><b>Local-first</b><small>Schlüssel und Mail-Zugang bleiben bei dir.</small></span></div></section><section class="setup-main"><div class="setup-top"><span>Schritt ${step+1} von ${onboardingSteps.length}</span><b>${onboardingSteps[step]}</b></div>${stepper()}<div class="setup-card">${content}</div><div class="setup-foot">MAIL-AGENT v0.9.0 · Lokales Gateway</div></section></main>`;
+  return `<main class="setup-page"><section class="setup-aside">${brand()}<div class="setup-aside-copy"><span class="kicker">SETUP IN WENIGEN MINUTEN</span><h1>Dein Postfach.<br><em>Dein Agent.</em></h1><p>MAIL-AGENT arbeitet lokal, kontrolliert und ausschließlich für E-Mail.</p></div><div class="trust-pill">${icon('shield',18)}<span><b>Local-first</b><small>Schlüssel und Mail-Zugang bleiben bei dir.</small></span></div></section><section class="setup-main"><div class="setup-top"><span>Schritt ${step+1} von ${onboardingSteps.length}</span><b>${onboardingSteps[step]}</b></div>${stepper()}<div class="setup-card">${content}</div><div class="setup-foot">MAIL-AGENT v0.10.0 · Lokales Gateway</div></section></main>`;
 }
 function field(label, id, value='', type='text', placeholder='') {
   return `<label class="field"><span>${label}</span><input id="${id}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}"></label>`;
@@ -167,9 +170,9 @@ async function finishOnboarding(){saveVisible();busy=true;render();try{await pos
 function navItem(view,label,ico,badge='') { return `<button class="nav-item ${activeView===view?'active':''}" data-view="${view}">${icon(ico,19)}<span>${label}</span>${badge?`<b>${badge}</b>`:''}</button>`; }
 function dashboardLayout(content) {
   const agentName=form.agentName||identity?.agent_name||'MAIL-AGENT';
-  return `<main class="dashboard"><aside class="sidebar">${brand(true)}<nav>${navItem('overview','Übersicht','home')}${navItem('activity','Aktivität','spark',brainStatus?.pending_total||'')}${navItem('inbox','Inbox','inbox',dashboard.messages.length||'')}${navItem('approvals','Freigaben','shield',dashboard.approvals.length||'')}${navItem('drafts','Entwürfe','draft',dashboard.drafts.length||'')}${navItem('settings','Einstellungen','settings')}</nav><div class="sidebar-bottom"><div class="agent-mini"><span class="avatar">${esc(agentName.slice(0,1).toUpperCase())}</span><span><b>${esc(agentName)}</b><small><i></i> Aktiv</small></span></div></div></aside><section class="workspace"><header class="topbar"><div><span class="workspace-kicker">MAIL-AGENT</span><h1>${viewTitle()}</h1></div><div class="top-actions"><button class="btn secondary compact" id="sync-now">${icon('sync',16)}Synchronisieren</button><span class="status-pill"><i></i> Gateway online</span></div></header><div class="workspace-body">${content}</div></section></main>`;
+  return `<main class="dashboard"><aside class="sidebar">${brand(true)}<nav>${navItem('overview','Übersicht','home')}${navItem('activity','Aktivität','spark',brainStatus?.pending_total||'')}${navItem('shadow','Testmodus','shield',runtimeSettings?.behavior?.execution_mode==='shadow'?'SHADOW':'')}${navItem('inbox','Inbox','inbox',dashboard.messages.length||'')}${navItem('approvals','Freigaben','shield',dashboard.approvals.length||'')}${navItem('drafts','Entwürfe','draft',dashboard.drafts.length||'')}${navItem('settings','Einstellungen','settings')}</nav><div class="sidebar-bottom"><div class="agent-mini"><span class="avatar">${esc(agentName.slice(0,1).toUpperCase())}</span><span><b>${esc(agentName)}</b><small><i></i> Aktiv</small></span></div></div></aside><section class="workspace"><header class="topbar"><div><span class="workspace-kicker">MAIL-AGENT</span><h1>${viewTitle()}</h1></div><div class="top-actions"><button class="btn secondary compact" id="sync-now">${icon('sync',16)}Synchronisieren</button><span class="status-pill"><i></i> Gateway online</span></div></header><div class="workspace-body">${content}</div></section></main>`;
 }
-function viewTitle(){return ({overview:'Übersicht',activity:'Agent Activity',inbox:'Inbox',approvals:'Freigaben',drafts:'Entwürfe',settings:'Einstellungen'})[activeView]||'Übersicht';}
+function viewTitle(){return ({overview:'Übersicht',activity:'Agent Activity',shadow:'Shadow Test',inbox:'Inbox',approvals:'Freigaben',drafts:'Entwürfe',settings:'Einstellungen'})[activeView]||'Übersicht';}
 function metric(label,value,sub,ico){return `<div class="stat-card"><div class="stat-top"><span>${label}</span><span class="stat-icon">${icon(ico,18)}</span></div><strong>${esc(value)}</strong><small>${esc(sub)}</small></div>`;}
 
 function emptyState(ico, title, text) { return `<div class="empty-state large">${icon(ico,30)}<b>${esc(title)}</b><span>${esc(text)}</span></div>`; }
@@ -178,6 +181,7 @@ function renderDashboard(){
   let content='';
   if(activeView==='overview') content=`<section class="hero-card"><div><span class="hero-kicker">DEIN AGENT IST BEREIT</span><h2>${esc(form.agentName||'MAIL-AGENT')} hält dein Postfach im Blick.</h2><p>Neue Nachrichten werden lokal synchronisiert, analysiert und nur innerhalb deiner Regeln bearbeitet.</p><div class="hero-actions"><button class="btn primary" data-view="inbox">Inbox öffnen${icon('chevron',16)}</button><button class="btn secondary" data-view="approvals">Freigaben prüfen</button></div></div><div class="hero-orb">${icon('spark',38)}</div></section><div class="stats-grid">${metric('Postfach',mailbox?.email_address||'Nicht verbunden',mailbox?.credential_available?'Vault geschützt':'Credential fehlt','mail')}${metric('Inbox',dashboard.messages.length,'lokal geladene Nachrichten','inbox')}${metric('Freigaben',dashboard.approvals.length,'warten auf deine Entscheidung','shield')}${metric('Entwürfe',dashboard.drafts.length,'vom Agenten vorbereitet','draft')}</div><section class="panel"><div class="panel-head"><div><span>LETZTE NACHRICHTEN</span><h3>Inbox</h3></div><button class="link-btn" data-view="inbox">Alle anzeigen →</button></div>${dashboard.messages.length?dashboard.messages.slice(0,5).map(mailRow).join(''):'<div class="empty-state">Noch keine Nachrichten synchronisiert.</div>'}</section>`;
   if(activeView==='activity') content=renderActivityCenter();
+  if(activeView==='shadow') content=renderShadowCenter();
   if(activeView==='inbox') content=`<section class="panel full"><div class="panel-head"><div><span>LOKAL SYNCHRONISIERT</span><h3>${esc(mailbox?.email_address||'Inbox')}</h3></div><span class="muted">${sync.last_synced_at?`Zuletzt ${esc(new Date(sync.last_synced_at).toLocaleString())}`:'Noch kein Sync'}</span></div>${dashboard.messages.length?dashboard.messages.map(mailRow).join(''):emptyState('inbox','Deine Inbox ist noch leer','Starte die erste Synchronisierung oben rechts.')}</section>`;
   if(activeView==='approvals') content=`<section class="panel full"><div class="panel-head"><div><span>HUMAN-IN-THE-LOOP</span><h3>Freigabe-Queue</h3></div><span class="badge">${dashboard.approvals.length} offen</span></div>${dashboard.approvals.length?dashboard.approvals.map(approvalCard).join(''):emptyState('shield','Alles erledigt','Es gibt aktuell keine offenen Aktionen.')}</section>`;
   if(activeView==='drafts') content=`<section class="panel full"><div class="panel-head"><div><span>VORBEREITET VON ${esc((form.agentName||'Agent').toUpperCase())}</span><h3>Entwürfe</h3></div><span class="badge">${dashboard.drafts.length}</span></div>${dashboard.drafts.length?dashboard.drafts.map(draftCard).join(''):emptyState('draft','Noch keine Entwürfe','Sobald dein Agent Antworten vorbereitet, erscheinen sie hier.')}</section>`;
@@ -246,12 +250,83 @@ function renderActivityCenter(){
   </div>`;
 }
 
+function shadowOutcomeLabel(value=''){
+  return ({would_draft:'Entwurf',would_approval:'Freigabe',would_execute:'Ausführung',no_action:'Keine Aktion',ignored:'Ignoriert',below_confidence:'Zu unsicher',blocked:'Blockiert',error:'Fehler'})[value]||value||'—';
+}
+function shadowResultRow(item){
+  const artifacts=(item.planned_artifacts||[]).join(', ')||'keine';
+  return `<div class="shadow-result"><div><b>${esc(item.subject||'(ohne Betreff)')}</b><small>${esc(item.sender||'')} · ${esc(item.category||'other')} · ${esc(item.priority||'normal')}</small></div><span class="badge soft">${esc(shadowOutcomeLabel(item.simulated_outcome))}</span><p>${esc(item.reason||item.error||'')}</p><small>Geplant: ${esc(artifacts)} · Side Effects: 0</small></div>`;
+}
+function shadowReportCard(report){
+  const outcomes=report.outcomes||{};
+  return `<article class="shadow-report"><div class="panel-head"><div><span>${esc(report.finished_at?new Date(report.finished_at).toLocaleString():'')}</span><h3>${esc(report.analyzed||0)} analysiert · ${esc(report.errors||0)} Fehler</h3></div><span class="badge soft">0 SIDE EFFECTS</span></div><div class="shadow-outcomes">${Object.entries(outcomes).map(([key,value])=>`<span><b>${esc(value)}</b>${esc(shadowOutcomeLabel(key))}</span>`).join('')||'<span><b>0</b>Keine Ergebnisse</span>'}</div>${(report.results||[]).slice(0,25).map(shadowResultRow).join('')}</article>`;
+}
+function renderRuleSimulation(){
+  if(!ruleSimulation)return '<div class="empty-state">Noch keine Regel simuliert.</div>';
+  const matched=ruleSimulation.matched_rule;
+  const policy=ruleSimulation.policy||{};
+  return `<div class="rule-sim-result"><div class="setting-row"><span>Treffer</span><b>${matched?esc(matched.pattern):'Keine spezielle Regel'}</b></div><div class="setting-row"><span>Regelmodus</span><b>${esc(ruleSimulation.rule_mode||'normal')}</b></div><div class="setting-row"><span>LLM-Aktion → Gateway</span><b>${esc(ruleSimulation.original_action)} → ${esc(ruleSimulation.resulting_action)}</b></div><div class="setting-row"><span>Policy</span><b>${policy.allowed?'Erlaubt':'Blockiert'} · ${esc(policy.risk||'')}</b></div><div class="setting-row"><span>Geplant</span><b>${esc((ruleSimulation.planned_artifacts||[]).join(', ')||'keine Aktion')}</b></div><div class="security-note">${icon('shield',18)}<span>Simulation abgeschlossen: <b>0 Side Effects</b>. Keine Mail, kein Draft und keine Approval-Queue wurde verändert.</span></div></div>`;
+}
+function renderShadowCenter(){
+  const status=shadowStatus||{};
+  const behavior=runtimeSettings?.behavior||{};
+  const mode=behavior.execution_mode||status.execution_mode||'live';
+  const mailbox=status.mailboxes?.[0]||{};
+  const running=(status.jobs||[]).find(job=>['queued','running'].includes(job.status));
+  const reports=status.reports||[];
+  const progress=running?Math.round((Number(running.completed||0)/Math.max(1,Number(running.total||running.requested||1)))*100):0;
+  return `<div class="shadow-center">
+    <section class="panel shadow-hero ${mode==='shadow'?'active':''}"><div><span class="hero-kicker">SAFE EVALUATION</span><h2>${mode==='shadow'?'Shadow Mode ist aktiv':'Live Mode ist aktiv'}</h2><p>${mode==='shadow'?'Neue Mails werden vollständig analysiert, aber Drafts, Approvals und Mailbox-Aktionen sind technisch gesperrt.':'Der Agent arbeitet produktiv innerhalb deiner Policy- und Freigaberegeln.'}</p><div class="hero-actions">${mode==='shadow'?'<button class="btn secondary" id="shadow-disable">Zurück zu Live</button>':'<button class="btn primary" id="shadow-enable">Shadow Mode aktivieren</button>'}<button class="btn secondary" id="shadow-refresh">Aktualisieren</button></div></div><div class="hero-orb">${icon('shield',34)}</div></section>
+    <div class="stats-grid">${metric('Modus',mode==='shadow'?'SHADOW':'LIVE',mode==='shadow'?'0 produktive Side Effects':'Policy-gesteuerte Ausführung','shield')}${metric('Live-Backlog',mailbox.live_pending||0,'noch nicht produktiv verarbeitet','inbox')}${metric('Shadow-Backlog',mailbox.shadow_pending||0,'noch nicht simuliert','spark')}${metric('Reports',reports.length,'lokale Shadow-Auswertungen','draft')}</div>
+    <div class="shadow-grid"><section class="panel"><div class="panel-head"><div><span>HISTORICAL REPLAY</span><h3>Echte Mails gefahrlos testen</h3></div><span class="badge soft">LLM CALLS</span></div><p class="rule-help">Replay liest bereits lokal synchronisierte Mails und führt dieselbe Brain → LLM → Rule → Policy-Kette aus. Es erzeugt niemals Drafts, Approvals oder Remote-Aktionen.</p><label class="field"><span>Anzahl Mails</span><select id="shadow-replay-limit"><option value="25">25 Mails</option><option value="100">100 Mails</option><option value="500">500 Mails</option></select></label>${running?`<div class="shadow-progress"><span style="width:${progress}%"></span></div><small>${esc(running.completed||0)} / ${esc(running.total||running.requested||0)} analysiert · ${esc(progress)} %</small>`:''}<div class="inline-actions left"><button class="btn primary" id="shadow-replay" ${running||shadowLoading?'disabled':''}>${running?'Replay läuft …':'Shadow-Test starten'}</button></div><div class="security-note">${icon('shield',18)}<span>Bei 500 Mails entstehen bis zu 500 LLM-Aufrufe. Standard ist deshalb bewusst 25.</span></div></section>
+    <section class="panel"><div class="panel-head"><div><span>RULE SIMULATOR</span><h3>Regeln ohne Mailbox testen</h3></div><span class="badge soft">0 SIDE EFFECTS</span></div><div class="form-grid two"><label class="field"><span>Absender</span><input id="rule-sim-sender" value="person@firma.de"></label><label class="field"><span>LLM-Aktion</span><select id="rule-sim-action">${['classify','create_draft','mark_read','move','archive','delete','send_reply','forward'].map(v=>`<option value="${v}">${v}</option>`).join('')}</select></label><label class="field"><span>Confidence</span><input id="rule-sim-confidence" type="number" min="0" max="1" step="0.01" value="0.90"></label><label class="field"><span>Priorität</span><select id="rule-sim-priority">${['normal','low','high','urgent'].map(v=>`<option value="${v}">${v}</option>`).join('')}</select></label><label class="field"><span>Kategorie</span><select id="rule-sim-category">${['other','personal','work','finance','support','sales','newsletter','notification','security'].map(v=>`<option value="${v}">${v}</option>`).join('')}</select></label></div><button class="btn primary" id="rule-simulate">Regel simulieren</button>${renderRuleSimulation()}</section></div>
+    <section class="panel full"><div class="panel-head"><div><span>SHADOW REPORTS</span><h3>Was der Agent getan hätte</h3></div><span class="badge soft">LOKAL</span></div>${reports.length?reports.map(shadowReportCard).join(''):emptyState('shield','Noch kein Shadow-Report','Starte einen Historical Replay oder aktiviere Shadow Mode für neue Mails.')}</section>
+  </div>`;
+}
+async function loadShadowStatus(silent=false){
+  try{shadowStatus=await get('/v1/agent/shadow');}
+  catch(e){if(!silent)showNotice(e.message,'error');}
+}
+async function setExecutionMode(mode){
+  if(!runtimeSettings)return;
+  const behavior={...(runtimeSettings.behavior||{}),execution_mode:mode};
+  try{runtimeSettings=await put('/v1/settings/behavior',{behavior});await loadShadowStatus(true);showNotice(mode==='shadow'?'Shadow Mode aktiviert. Produktive Mail-Aktionen sind gesperrt.':'Live Mode aktiviert.');render();}
+  catch(e){showNotice(e.message,'error');}
+}
+async function startShadowReplay(){
+  const mailbox=dashboard.mailboxes[0];
+  const limit=Number(document.getElementById('shadow-replay-limit')?.value||25);
+  shadowLoading=true;render();
+  try{
+    let job=await post('/v1/agent/shadow/replay',{mailbox_id:mailbox?.mailbox_id||null,limit});
+    showNotice(`Shadow-Replay mit ${limit} Mails gestartet.`);
+    while(['queued','running'].includes(job.status)){
+      await new Promise(resolve=>setTimeout(resolve,900));
+      job=await get(`/v1/agent/shadow/jobs/${encodeURIComponent(job.job_id)}`);
+      await loadShadowStatus(true);render();
+    }
+    await loadShadowStatus(true);
+    if(job.status==='completed')showNotice('Shadow-Replay abgeschlossen · 0 Side Effects.');
+    else showNotice(job.error||'Shadow-Replay fehlgeschlagen.','error');
+  }catch(e){showNotice(e.message,'error');}
+  finally{shadowLoading=false;await loadShadowStatus(true);render();}
+}
+async function simulateRule(){
+  const sender=document.getElementById('rule-sim-sender')?.value?.trim()||'';
+  const action=document.getElementById('rule-sim-action')?.value||'classify';
+  const confidence=Number(document.getElementById('rule-sim-confidence')?.value||0.9);
+  const priority=document.getElementById('rule-sim-priority')?.value||'normal';
+  const category=document.getElementById('rule-sim-category')?.value||'other';
+  try{ruleSimulation=await post('/v1/agent/rules/simulate',{sender,action,confidence,priority,category,needs_reply:action==='send_reply'});showNotice('Regel simuliert · nichts wurde verändert.');render();}
+  catch(e){showNotice(e.message,'error');}
+}
+
 function brainLearningCard(item){return `<div class="security-block"><span>${icon('spark',22)}</span><div><b>${esc(item.title||'Lernvorschlag')}</b><p>${esc(item.reason||'')}</p><small>${esc(item.memory_line||'')}</small><div class="inline-actions left"><button class="btn secondary compact" data-learning-reject="${esc(item.candidate_id)}">Verwerfen</button><button class="btn primary compact" data-learning-accept="${esc(item.candidate_id)}">Übernehmen</button></div></div></div>`;}
 function renderAgentSettings(){
   const rs=runtimeSettings||{};
   const id=rs.identity||identity||{};
   const profile=rs.profile||{owner_id:form.ownerId,agent_name:form.agentName,usage_type:form.usageType,autonomy_mode:form.autonomy,language:form.language,tone:form.tone,email_signature:form.emailSignature};
-  const behavior=rs.behavior||{enabled:true,auto_analyze_new_mail:true,auto_create_drafts:true,minimum_confidence:.72,max_messages_per_cycle:20,thread_context_messages:8,active_days:[0,1,2,3,4,5,6],active_from:'00:00',active_until:'23:59',never_auto_act_senders:[],rules:[]};
+  const behavior=rs.behavior||{enabled:true,execution_mode:'live',auto_analyze_new_mail:true,auto_create_drafts:true,minimum_confidence:.72,max_messages_per_cycle:20,thread_context_messages:8,active_days:[0,1,2,3,4,5,6],active_from:'00:00',active_until:'23:59',never_auto_act_senders:[],rules:[]};
   const provider=rs.provider||form.provider||'ollama';
   const catalog=rs.providers||{};
   const models=catalog[provider]?.models||[];
@@ -277,7 +352,7 @@ function renderAgentSettings(){
     ${brainPanels}
     <section class="panel"><div class="panel-head"><div><span>LLM</span><h3>Modell jederzeit wechseln</h3></div><span class="badge soft">${esc(provider)}</span></div><div class="form-grid two"><label class="field"><span>Provider</span><select id="settings-provider"><option value="ollama" ${provider==='ollama'?'selected':''}>Ollama · lokal</option><option value="codex" ${provider==='codex'?'selected':''}>ChatGPT / OpenAI · Browser-Login</option></select></label>${modelControl}</div><div class="security-block">${icon('spark',22)}<div><b>${catalog[provider]?.available?'Provider bereit':'Provider prüfen'}</b><p>${esc(providerDetail)}</p></div></div><div class="inline-actions left"><button class="btn secondary" id="settings-provider-test">Provider prüfen</button>${provider==='codex'?'<button class="btn secondary" id="settings-chatgpt-login">Mit ChatGPT anmelden</button>':''}<button class="btn primary" id="settings-save-llm">LLM speichern</button></div></section>
     <section class="panel"><div class="panel-head"><div><span>PERSÖNLICHKEIT</span><h3>Antwortstil & Kontrolle</h3></div></div><div class="form-grid two"><label class="field"><span>Autonomie</span><select id="settings-autonomy"><option value="observer" ${profile.autonomy_mode==='observer'?'selected':''}>Observer</option><option value="assistant" ${profile.autonomy_mode==='assistant'?'selected':''}>Assistant</option><option value="copilot" ${profile.autonomy_mode==='copilot'?'selected':''}>Copilot</option><option value="autonomous" ${profile.autonomy_mode==='autonomous'?'selected':''}>Autonomous</option></select></label><label class="field"><span>Ton</span><select id="settings-tone"><option value="friendly" ${profile.tone==='friendly'?'selected':''}>Freundlich</option><option value="professional" ${profile.tone==='professional'?'selected':''}>Professionell</option><option value="direct" ${profile.tone==='direct'?'selected':''}>Direkt</option><option value="warm" ${profile.tone==='warm'?'selected':''}>Warm</option></select></label><label class="field"><span>Sprache</span><select id="settings-language"><option value="de" ${profile.language==='de'?'selected':''}>Deutsch</option><option value="en" ${profile.language==='en'?'selected':''}>English</option></select></label></div><label class="field"><span>Persönliche Signatur vor der Agent-ID</span><textarea id="settings-email-signature" rows="4">${esc(profile.email_signature||'')}</textarea></label><div class="security-note">${icon('lock',18)}<span>Die persönliche Signatur ist frei änderbar. Die darunter liegende MAIL-AGENT-ID-Signatur ist technisch verpflichtend.</span></div><div class="inline-actions left"><button class="btn primary" id="settings-save-profile">Profil speichern</button></div></section>
-    <section class="panel"><div class="panel-head"><div><span>AGENTISCHES VERHALTEN</span><h3>Wann und wie der Agent arbeitet</h3></div><span class="badge ${behavior.enabled?'':'soft'}">${behavior.enabled?'AKTIV':'PAUSIERT'}</span></div><div class="setting-row"><span>Agent aktiv</span><input id="behavior-enabled" type="checkbox" ${checked(behavior.enabled)}></div><div class="setting-row"><span>Neue Mails automatisch analysieren</span><input id="behavior-auto-analyze" type="checkbox" ${checked(behavior.auto_analyze_new_mail)}></div><div class="setting-row"><span>Antwortentwürfe automatisch vorbereiten</span><input id="behavior-auto-drafts" type="checkbox" ${checked(behavior.auto_create_drafts)}></div><div class="form-grid two"><label class="field"><span>Mindest-Konfidenz</span><input id="behavior-confidence" type="number" min="0" max="1" step="0.01" value="${esc(behavior.minimum_confidence)}"></label><label class="field"><span>Max. Mails pro Zyklus</span><input id="behavior-max-messages" type="number" min="1" max="200" value="${esc(behavior.max_messages_per_cycle)}"></label><label class="field"><span>Aktiv ab</span><input id="behavior-from" type="time" value="${esc(behavior.active_from)}"></label><label class="field"><span>Aktiv bis</span><input id="behavior-until" type="time" value="${esc(behavior.active_until)}"></label></div><div class="field"><span>Aktive Tage</span><div class="day-selector">${days}</div></div><label class="field"><span>Nie automatisch bearbeiten · Absender/Domain, eine Zeile pro Regel</span><textarea id="behavior-blocked-senders" rows="4" placeholder="newsletter@example.com\n@example.org">${esc((behavior.never_auto_act_senders||[]).join('\n'))}</textarea></label><div class="security-block">${icon('shield',22)}<div><b>Versand bleibt menschlich freigabepflichtig</b><p>Agentisch bedeutet: automatisch erkennen, analysieren und signierte Entwürfe vorbereiten. Senden, Weiterleiten und Löschen bleiben als High-Risk-Aktionen freigabepflichtig.</p></div></div><div class="inline-actions left"><button class="btn primary" id="settings-save-behavior">Verhalten speichern</button><button class="btn secondary" id="settings-run-agent">Agent jetzt ausführen</button></div></section>
+    <section class="panel"><div class="panel-head"><div><span>AGENTISCHES VERHALTEN</span><h3>Wann und wie der Agent arbeitet</h3></div><span class="badge ${behavior.enabled?'':'soft'}">${behavior.enabled?'AKTIV':'PAUSIERT'}</span></div><div class="setting-row"><span>Agent aktiv</span><input id="behavior-enabled" type="checkbox" ${checked(behavior.enabled)}></div><label class="field"><span>Ausführungsmodus</span><select id="behavior-execution-mode"><option value="live" ${behavior.execution_mode!=='shadow'?'selected':''}>Live · Policy-gesteuert</option><option value="shadow" ${behavior.execution_mode==='shadow'?'selected':''}>Shadow · nur simulieren</option></select></label><div class="setting-row"><span>Neue Mails automatisch analysieren</span><input id="behavior-auto-analyze" type="checkbox" ${checked(behavior.auto_analyze_new_mail)}></div><div class="setting-row"><span>Antwortentwürfe automatisch vorbereiten</span><input id="behavior-auto-drafts" type="checkbox" ${checked(behavior.auto_create_drafts)}></div><div class="form-grid two"><label class="field"><span>Mindest-Konfidenz</span><input id="behavior-confidence" type="number" min="0" max="1" step="0.01" value="${esc(behavior.minimum_confidence)}"></label><label class="field"><span>Max. Mails pro Zyklus</span><input id="behavior-max-messages" type="number" min="1" max="200" value="${esc(behavior.max_messages_per_cycle)}"></label><label class="field"><span>Aktiv ab</span><input id="behavior-from" type="time" value="${esc(behavior.active_from)}"></label><label class="field"><span>Aktiv bis</span><input id="behavior-until" type="time" value="${esc(behavior.active_until)}"></label></div><div class="field"><span>Aktive Tage</span><div class="day-selector">${days}</div></div><label class="field"><span>Nie automatisch bearbeiten · Absender/Domain, eine Zeile pro Regel</span><textarea id="behavior-blocked-senders" rows="4" placeholder="newsletter@example.com\n@example.org">${esc((behavior.never_auto_act_senders||[]).join('\n'))}</textarea></label><div class="security-block">${icon('shield',22)}<div><b>Versand bleibt menschlich freigabepflichtig</b><p>Agentisch bedeutet: automatisch erkennen, analysieren und signierte Entwürfe vorbereiten. Senden, Weiterleiten und Löschen bleiben als High-Risk-Aktionen freigabepflichtig.</p></div></div><div class="inline-actions left"><button class="btn primary" id="settings-save-behavior">Verhalten speichern</button><button class="btn secondary" id="settings-run-agent">Agent jetzt ausführen</button></div></section>
     <section class="panel"><div class="panel-head"><div><span>REGELN</span><h3>Absender & Domains deterministisch steuern</h3></div><button class="btn secondary compact" id="settings-add-rule">Regel hinzufügen</button></div><p class="rule-help">Regeln werden nach der LLM-Analyse im Gateway erzwungen. Muster wie <b>@firma.de</b> oder eine vollständige Adresse sind möglich. „Nur Entwurf“ kann einen vorgeschlagenen Versand technisch auf einen Draft herunterstufen.</p><div class="rule-editor">${ruleRows||'<div class="empty-state">Noch keine speziellen Regeln.</div>'}</div><div class="security-note">${icon('shield',18)}<span>Priorität und Kategorie können pro Regel fest vorgegeben werden; leer bedeutet automatische Klassifikation.</span></div></section>
     <section class="panel"><div class="panel-head"><div><span>SICHERHEIT</span><h3>Unverhandelbare Grenzen</h3></div></div><div class="security-block">${icon('lock',22)}<div><b>Credential Vault aktiv</b><p>Mailbox-Secrets, OAuth-Tokens und Agent-Schlüssel bleiben lokal geschützt.</p></div></div><div class="security-block">${icon('shield',22)}<div><b>Policy Engine vor Ausführung</b><p>Das LLM schlägt Aktionen nur vor. Regeln, Freigaben und Agent-ID-Pflicht werden deterministisch im Gateway erzwungen.</p></div></div></section>
   </div>`;
@@ -338,7 +413,7 @@ async function saveBehaviorSettings(){
   const days=[...document.querySelectorAll('[data-agent-day]:checked')].map(el=>Number(el.dataset.agentDay));
   const blocked=(document.getElementById('behavior-blocked-senders')?.value||'').split(/[\n,]+/).map(v=>v.trim()).filter(Boolean);
   const current=runtimeSettings?.behavior||{};
-  const behavior={...current,enabled:!!document.getElementById('behavior-enabled')?.checked,auto_analyze_new_mail:!!document.getElementById('behavior-auto-analyze')?.checked,auto_create_drafts:!!document.getElementById('behavior-auto-drafts')?.checked,minimum_confidence:Number(document.getElementById('behavior-confidence')?.value||0.72),max_messages_per_cycle:Number(document.getElementById('behavior-max-messages')?.value||20),active_from:document.getElementById('behavior-from')?.value||'00:00',active_until:document.getElementById('behavior-until')?.value||'23:59',active_days:days,never_auto_act_senders:blocked,rules:collectRuleRows()};
+  const behavior={...current,enabled:!!document.getElementById('behavior-enabled')?.checked,execution_mode:document.getElementById('behavior-execution-mode')?.value||current.execution_mode||'live',auto_analyze_new_mail:!!document.getElementById('behavior-auto-analyze')?.checked,auto_create_drafts:!!document.getElementById('behavior-auto-drafts')?.checked,minimum_confidence:Number(document.getElementById('behavior-confidence')?.value||0.72),max_messages_per_cycle:Number(document.getElementById('behavior-max-messages')?.value||20),active_from:document.getElementById('behavior-from')?.value||'00:00',active_until:document.getElementById('behavior-until')?.value||'23:59',active_days:days,never_auto_act_senders:blocked,rules:collectRuleRows()};
   try{runtimeSettings=await put('/v1/settings/behavior',{behavior});showNotice('Agentisches Verhalten gespeichert.');render();}
   catch(e){showNotice(e.message,'error');}
 }
@@ -353,7 +428,9 @@ async function runAgentNow(){
     const cycles=result.results||[];
     const total=key=>cycles.reduce((sum,item)=>sum+Number(item[key]||0),0);
     const pending=cycles.reduce((sum,item)=>sum+Number(item.pending_after||0),0);
-    showNotice(`Agentenlauf · ${total('processed')} verarbeitet · ${total('drafts')} Entwürfe · ${total('approvals')} Freigaben · ${total('errors')} Fehler · ${pending} warten`);
+    const shadow=cycles.some(item=>item.execution_mode==='shadow');
+    if(shadow)showNotice(`Shadow-Lauf · ${total('processed')} analysiert · ${total('would_draft')} Entwürfe simuliert · ${total('would_approval')} Freigaben simuliert · ${total('errors')} Fehler · 0 Side Effects`);
+    else showNotice(`Agentenlauf · ${total('processed')} verarbeitet · ${total('drafts')} Entwürfe · ${total('approvals')} Freigaben · ${total('errors')} Fehler · ${pending} warten`);
     render();
   }catch(e){showNotice(e.message,'error');}
 }
@@ -361,7 +438,7 @@ async function runAgentNow(){
 function renderUpdatePanel(){
   const grid=document.querySelector('.settings-grid');
   if(!grid)return;
-  const current=updateStatus?.current_version||'0.9.0';
+  const current=updateStatus?.current_version||'0.10.0';
   const available=!!updateStatus?.available;
   const error=updateStatus?.error||'';
   const headline=available?`Version ${esc(updateStatus.latest_version)} verfügbar`:error?'Update-Kanal nicht erreichbar':'Du bist auf dem neuesten Stand';
@@ -399,7 +476,7 @@ document.addEventListener('click',event=>{
 });
 
 function bindDashboard(){
-  document.querySelectorAll('[data-view]').forEach(el=>el.onclick=async()=>{activeView=el.dataset.view;if(['settings','activity'].includes(activeView))await Promise.all([runtimeSettings?Promise.resolve():loadRuntimeSettings(true),loadBrainStatus(true)]);render();});
+  document.querySelectorAll('[data-view]').forEach(el=>el.onclick=async()=>{activeView=el.dataset.view;if(['settings','activity','shadow'].includes(activeView))await Promise.all([runtimeSettings?Promise.resolve():loadRuntimeSettings(true),loadBrainStatus(true),activeView==='shadow'?loadShadowStatus(true):Promise.resolve()]);render();});
   document.getElementById('sync-now')?.addEventListener('click',syncNow);
   document.querySelectorAll('[data-approve]').forEach(el=>el.onclick=()=>decideApproval(el.dataset.approve,'approve'));
   document.querySelectorAll('[data-reject]').forEach(el=>el.onclick=()=>decideApproval(el.dataset.reject,'reject'));
@@ -420,6 +497,11 @@ function bindDashboard(){
   document.getElementById('brain-refresh-activity')?.addEventListener('click',async()=>{await loadBrainStatus(false);render();});
   document.getElementById('activity-run-agent')?.addEventListener('click',runAgentNow);
   document.getElementById('activity-refresh')?.addEventListener('click',async()=>{await loadBrainStatus(false);render();});
+  document.getElementById('shadow-enable')?.addEventListener('click',()=>setExecutionMode('shadow'));
+  document.getElementById('shadow-disable')?.addEventListener('click',()=>setExecutionMode('live'));
+  document.getElementById('shadow-refresh')?.addEventListener('click',async()=>{await loadShadowStatus(false);render();});
+  document.getElementById('shadow-replay')?.addEventListener('click',startShadowReplay);
+  document.getElementById('rule-simulate')?.addEventListener('click',simulateRule);
   document.querySelectorAll('[data-learning-accept]').forEach(el=>el.onclick=()=>decideBrainLearning(el.dataset.learningAccept,'accept'));
   document.querySelectorAll('[data-learning-reject]').forEach(el=>el.onclick=()=>decideBrainLearning(el.dataset.learningReject,'reject'));
   document.getElementById('settings-add-rule')?.addEventListener('click',addRule);

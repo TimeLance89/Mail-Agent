@@ -20,6 +20,11 @@ class AutonomyMode(StrEnum):
     AUTONOMOUS = "autonomous"
 
 
+class AgentExecutionMode(StrEnum):
+    LIVE = "live"
+    SHADOW = "shadow"
+
+
 class MailActionType(StrEnum):
     READ = "read"
     SUMMARIZE = "summarize"
@@ -86,6 +91,7 @@ class AgentProfile(BaseModel):
 
 class AgentBehaviorSettings(BaseModel):
     enabled: bool = True
+    execution_mode: AgentExecutionMode = AgentExecutionMode.LIVE
     auto_analyze_new_mail: bool = True
     auto_create_drafts: bool = True
     auto_mark_read: bool = False
