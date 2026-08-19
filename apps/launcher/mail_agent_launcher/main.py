@@ -18,15 +18,34 @@ from typing import Any
 
 from mail_agent_core.update import UpdateClient
 
+from .desktop_runtime import (
+    DesktopGatewayClient,
+    DesktopNotification,
+    DesktopStatus,
+    NotificationTracker,
+    desktop_view_url,
+)
+
 APP_NAME = "MAIL-AGENT"
-APP_VERSION = "0.12.0"
+APP_VERSION = "0.13.0"
 GATEWAY_PORT = 8765
 REGISTRY_PORT = 8770
 GATEWAY_URL = f"http://127.0.0.1:{GATEWAY_PORT}"
-UPDATE_FEED_URL = os.getenv("MAIL_AGENT_UPDATE_FEED_URL", "https://api.github.com/repos/TimeLance89/Mail-Agent/releases/tags/preview-latest")
-UPDATE_RELEASE_PAGE = os.getenv("MAIL_AGENT_UPDATE_RELEASE_PAGE", "https://github.com/TimeLance89/Mail-Agent/releases/tag/preview-latest")
+UPDATE_FEED_URL = os.getenv(
+    "MAIL_AGENT_UPDATE_FEED_URL",
+    "https://api.github.com/repos/TimeLance89/Mail-Agent/releases/tags/preview-latest",
+)
+UPDATE_RELEASE_PAGE = os.getenv(
+    "MAIL_AGENT_UPDATE_RELEASE_PAGE",
+    "https://github.com/TimeLance89/Mail-Agent/releases/tag/preview-latest",
+)
 UPDATE_TOKEN = os.getenv("MAIL_AGENT_UPDATE_TOKEN", "").strip() or None
-AUTO_UPDATE_CHECK_SECONDS = max(3600, int(os.getenv("MAIL_AGENT_AUTO_UPDATE_CHECK_SECONDS", "21600")))
+AUTO_UPDATE_CHECK_SECONDS = max(
+    3600, int(os.getenv("MAIL_AGENT_AUTO_UPDATE_CHECK_SECONDS", "21600"))
+)
+DESKTOP_STATUS_POLL_SECONDS = max(
+    15, int(os.getenv("MAIL_AGENT_DESKTOP_STATUS_POLL_SECONDS", "30"))
+)
 
 
 def user_data_dir() -> Path:
@@ -263,12 +282,16 @@ def wait_for_gateway(
         return False, "Das lokale Gateway hat nicht rechtzeitig geantwortet."
 
 
-def open_app_browser() -> bool:
+def open_app_view(view: str = "overview") -> bool:
     try:
-        return bool(webbrowser.open(GATEWAY_URL, new=1))
+        return bool(webbrowser.open(desktop_view_url(GATEWAY_URL, view), new=1))
     except Exception:
         logging.exception("Could not open browser")
         return False
+
+
+def open_app_browser() -> bool:
+    return open_app_view("overview")
 
 
 class DesktopTray:
@@ -276,12 +299,26 @@ class DesktopTray:
         self.servers = servers
         self.data_dir = data_dir
         self.icon: Any | None = None
+        self._pystray: Any | None = None
         self.update_client = UpdateClient(
             feed_url=UPDATE_FEED_URL,
             release_page=UPDATE_RELEASE_PAGE,
             token=UPDATE_TOKEN,
         )
+        self.gateway = DesktopGatewayClient(GATEWAY_URL)
+        self.notifications = NotificationTracker()
+        self.status = DesktopStatus(
+            key="active",
+            label="Aktiv",
+            paused=False,
+            execution_mode="live",
+            approval_count=0,
+            draft_count=0,
+            pending_count=0,
+            health_overall="unknown",
+        )
         self._update_lock = threading.Lock()
+        self._desktop_lock = threading.Lock()
         self._quit_event = threading.Event()
         self._last_prompted_version: str | None = None
 
@@ -297,7 +334,123 @@ class DesktopTray:
         return image
 
     def open_ui(self, *_: Any) -> None:
-        open_app_browser()
+        open_app_view("overview")
+
+    def open_activity(self, *_: Any) -> None:
+        open_app_view("activity")
+
+    def open_approvals(self, *_: Any) -> None:
+        open_app_view("approvals")
+
+    def open_health(self, *_: Any) -> None:
+        open_app_view("system")
+
+    def _menu(self) -> Any:
+        pystray = self._pystray
+        if pystray is None:
+            return None
+        work = (
+            f"{self.status.approval_count} Freigaben · "
+            f"{self.status.draft_count} Entwürfe · {self.status.pending_count} warten"
+        )
+        pause_label = "Agent fortsetzen" if self.status.paused else "Agent pausieren"
+        return pystray.Menu(
+            pystray.MenuItem("MAIL-AGENT öffnen", self.open_ui, default=True),
+            pystray.MenuItem(f"Status: {self.status.label}", None, enabled=False),
+            pystray.MenuItem(work, None, enabled=False),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem(pause_label, self.toggle_agent),
+            pystray.MenuItem("Aktivität öffnen", self.open_activity),
+            pystray.MenuItem("Freigaben öffnen", self.open_approvals),
+            pystray.MenuItem("Systemzustand öffnen", self.open_health),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Nach Updates suchen", self.check_updates),
+            pystray.Menu.SEPARATOR,
+            pystray.MenuItem("Beenden", self.quit),
+        )
+
+    def _refresh_menu(self) -> None:
+        if self.icon is None or self._pystray is None:
+            return
+        try:
+            self.icon.menu = self._menu()
+            self.icon.title = f"MAIL-AGENT · {self.status.label}"
+            self.icon.update_menu()
+        except Exception:
+            logging.exception("Could not refresh tray menu")
+
+    def _notify(self, notification: DesktopNotification) -> None:
+        if self.icon is None:
+            return
+        try:
+            self.icon.notify(notification.message, notification.title)
+        except Exception:
+            logging.exception("Desktop notification failed")
+
+    def _apply_snapshot(self, snapshot: dict[str, Any]) -> None:
+        status = snapshot.get("status")
+        if isinstance(status, DesktopStatus):
+            self.status = status
+        events = self.notifications.observe(
+            approvals=list(snapshot.get("approvals") or []),
+            drafts=list(snapshot.get("drafts") or []),
+            health=dict(snapshot.get("health") or {}),
+        )
+        self._refresh_menu()
+        for event in events:
+            self._notify(event)
+
+    def _refresh_desktop_state(self) -> None:
+        if not self._desktop_lock.acquire(blocking=False):
+            return
+        try:
+            self._apply_snapshot(self.gateway.snapshot())
+        except Exception:
+            logging.exception("Desktop status refresh failed")
+        finally:
+            self._desktop_lock.release()
+
+    def _desktop_monitor_loop(self) -> None:
+        if self._quit_event.wait(2):
+            return
+        while not self._quit_event.is_set():
+            self._refresh_desktop_state()
+            if self._quit_event.wait(DESKTOP_STATUS_POLL_SECONDS):
+                return
+
+    def toggle_agent(self, *_: Any) -> None:
+        threading.Thread(
+            target=self._toggle_agent_worker,
+            daemon=True,
+            name="mail-agent-pause-toggle",
+        ).start()
+
+    def _toggle_agent_worker(self) -> None:
+        target_enabled = self.status.paused
+        if not self._desktop_lock.acquire(blocking=False):
+            return
+        try:
+            self.gateway.set_enabled(target_enabled)
+            self._apply_snapshot(self.gateway.snapshot())
+            message = "Agent arbeitet wieder." if target_enabled else "Agent wurde pausiert."
+            self._notify(
+                DesktopNotification(
+                    title="MAIL-AGENT",
+                    message=message,
+                    view="overview",
+                )
+            )
+        except Exception:
+            logging.exception("Could not change agent state from tray")
+            self._notify(
+                DesktopNotification(
+                    title="MAIL-AGENT",
+                    message="Der Agentenstatus konnte nicht geändert werden.",
+                    view="system",
+                )
+            )
+        finally:
+            self._desktop_lock.release()
 
     def check_updates(self, *_: Any) -> None:
         threading.Thread(
@@ -393,15 +546,18 @@ class DesktopTray:
         try:
             import pystray
 
-            menu = pystray.Menu(
-                pystray.MenuItem("MAIL-AGENT öffnen", self.open_ui, default=True),
-                pystray.MenuItem("Status: Aktiv", None, enabled=False),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Nach Updates suchen", self.check_updates),
-                pystray.Menu.SEPARATOR,
-                pystray.MenuItem("Beenden", self.quit),
+            self._pystray = pystray
+            self.icon = pystray.Icon(
+                "MAIL-AGENT",
+                self._image(),
+                f"MAIL-AGENT · {self.status.label}",
+                self._menu(),
             )
-            self.icon = pystray.Icon("MAIL-AGENT", self._image(), "MAIL-AGENT", menu)
+            threading.Thread(
+                target=self._desktop_monitor_loop,
+                daemon=True,
+                name="mail-agent-desktop-status",
+            ).start()
             threading.Thread(
                 target=self._auto_update_loop,
                 daemon=True,
