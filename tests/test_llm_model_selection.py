@@ -12,28 +12,37 @@ from mail_agent_core.providers import CodexCliProvider, CompletionRequest
 
 
 ROOT = Path(__file__).resolve().parents[1]
+MODEL_UI = ROOT / "apps/web/llm-model-settings-v2.js"
 
 
 def test_llm_model_selector_is_loaded_after_main_app():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
-    assert "/assets/llm-model-settings.js" in index
-    assert index.index("/assets/app.js") < index.index("/assets/llm-model-settings.js")
-    assert index.index("/assets/llm-model-settings.js") < index.index("/assets/dashboard-live.js")
+    assert "/assets/llm-model-settings-v2.js" in index
+    assert "/assets/llm-model-settings.js" not in index
+    assert index.index("/assets/app.js") < index.index("/assets/llm-model-settings-v2.js")
+    assert index.index("/assets/llm-model-settings-v2.js") < index.index("/assets/dashboard-live.js")
 
 
 def test_model_selector_auto_discovers_settings_and_onboarding_models():
-    source = (ROOT / "apps/web/llm-model-settings.js").read_text(encoding="utf-8")
+    source = MODEL_UI.read_text(encoding="utf-8")
     assert "settings-model" in source
     assert "model-select" in source
     assert "/v1/providers/probe" in source
-    assert "autoDiscoverSettings" in source
-    assert "autoDiscoverSetup" in source
+    assert "enhanceSettings" in source
+    assert "enhanceOnboarding" in source
     assert "Modelle neu erkennen" in source
     assert "Automatisch (Codex-Standard)" in source
     assert "Expertenoption: andere Modell-ID" in source
     assert "document.createElement('select')" in source
     assert "datalist" not in source.lower()
     assert "gpt-5" not in source.lower()
+
+
+def test_model_selector_observer_cannot_watch_its_own_subtree_mutations():
+    source = MODEL_UI.read_text(encoding="utf-8")
+    assert "observer.observe(app, { childList: true });" in source
+    assert "subtree: true" not in source
+    assert "react to its own DOM changes and lock up the browser" in source
 
 
 def test_existing_app_persists_selected_model():
@@ -49,7 +58,7 @@ def test_llm_model_selector_javascript_syntax():
     if not node:
         pytest.skip("Node.js is not available")
     result = subprocess.run(
-        [node, "--check", str(ROOT / "apps/web/llm-model-settings.js")],
+        [node, "--check", str(MODEL_UI)],
         capture_output=True,
         text=True,
         check=False,
