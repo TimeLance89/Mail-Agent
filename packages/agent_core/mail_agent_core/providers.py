@@ -41,6 +41,51 @@ def _hidden_process_creationflags(platform_name: str | None = None) -> int:
     return getattr(subprocess, "CREATE_NO_WINDOW", 0)
 
 
+async def _terminate_process_tree(proc: Any) -> None:
+    """Best-effort bounded termination for provider subprocesses.
+
+    On Windows Codex may be launched through a `.cmd` wrapper. Killing only cmd.exe can leave the
+    actual Codex child alive with inherited stdout/stderr pipe handles. Waiting on communicate()
+    after that can therefore block forever. taskkill /T terminates the whole process tree and the
+    final wait is itself bounded, so provider discovery can never keep MAIL-AGENT startup hostage.
+    """
+
+    if getattr(proc, "returncode", None) is not None:
+        return
+
+    pid = getattr(proc, "pid", None)
+    terminated = False
+    if os.name == "nt" and pid:
+        try:
+            await asyncio.to_thread(
+                subprocess.run,
+                ["taskkill", "/PID", str(pid), "/T", "/F"],
+                stdout=subprocess.DEVNULL,
+                stderr=subprocess.DEVNULL,
+                timeout=3,
+                check=False,
+                creationflags=_hidden_process_creationflags(),
+            )
+            terminated = True
+        except Exception:
+            terminated = False
+
+    if not terminated:
+        try:
+            proc.kill()
+        except (ProcessLookupError, AttributeError):
+            return
+        except Exception:
+            pass
+
+    try:
+        await asyncio.wait_for(proc.wait(), timeout=2.0)
+    except Exception:
+        # Never turn cleanup into another unbounded wait. The OS will reap any remaining process
+        # when its handles close; taskkill /T already handles the important Windows child-tree case.
+        pass
+
+
 class LLMProvider(ABC):
     name: str
 
@@ -121,6 +166,7 @@ class CodexCliProvider(LLMProvider):
             command = self._command("--version")
         except RuntimeError as exc:
             return ProviderHealth(False, str(exc))
+        proc: Any | None = None
         try:
             proc = await asyncio.create_subprocess_exec(
                 *command,
@@ -131,7 +177,13 @@ class CodexCliProvider(LLMProvider):
             stdout, stderr = await asyncio.wait_for(proc.communicate(), timeout=5)
             detail = (stdout or stderr).decode(errors="replace").strip()
             return ProviderHealth(proc.returncode == 0, detail or "Codex CLI detected")
+        except TimeoutError:
+            if proc is not None:
+                await _terminate_process_tree(proc)
+            return ProviderHealth(False, "Codex check timed out")
         except Exception as exc:
+            if proc is not None:
+                await _terminate_process_tree(proc)
             return ProviderHealth(False, f"Codex check failed: {exc}")
 
     @staticmethod
@@ -177,8 +229,10 @@ class CodexCliProvider(LLMProvider):
         try:
             stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
         except TimeoutError:
-            proc.kill()
-            await proc.communicate()
+            await _terminate_process_tree(proc)
+            return []
+        except Exception:
+            await _terminate_process_tree(proc)
             return []
         if proc.returncode != 0:
             return []
