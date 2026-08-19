@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import re
 from pathlib import Path
 
 
@@ -8,7 +9,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_reliability_routes_and_startup_recovery_are_wired():
     main = (ROOT / "apps/gateway/mail_agent_gateway/main.py").read_text(encoding="utf-8")
-    assert 'APP_VERSION = "0.13.1"' in main
+    assert re.search(r'^APP_VERSION = "[^"]+"$', main, re.MULTILINE)
     assert "RecoveryManager(" in main
     assert "recovery_manager.recover_stale_executions()" in main
     assert '@app.get("/v1/system/health")' in main
@@ -52,11 +53,12 @@ def test_0131_hotfix_version_is_synchronized_for_release_build():
     workflow = (ROOT / ".github/workflows/build-installers.yml").read_text(encoding="utf-8")
 
     assert 'version = "0.13.1"' in pyproject
-    assert 'APP_VERSION = "0.13.1"' in gateway
-    assert 'APP_VERSION = "0.13.1"' in launcher
+    assert re.search(r'^APP_VERSION = "[^"]+"$', gateway, re.MULTILINE)
+    assert re.search(r'^APP_VERSION = "[^"]+"$', launcher, re.MULTILINE)
     assert 'app_version: str = "0.13.1"' in identity
     assert '#define MyAppVersion "0.13.1"' in installer
     assert "const APP_VERSION = '0.13.1'" in desktop
     assert "/assets/desktop-links.js" in index
     assert '"apps/gateway/mail_agent_gateway/main.py"' in workflow
     assert '"apps/launcher/mail_agent_launcher/main.py"' in workflow
+    assert "Could not synchronize APP_VERSION" in workflow
