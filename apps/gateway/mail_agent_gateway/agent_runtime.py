@@ -4,6 +4,7 @@ from typing import Any
 
 from mail_agent_core.agent import MailAgent, MailMessageContext, ThreadMessageContext
 from mail_agent_core.behavior import apply_rule_overrides, behavior_is_active, matching_rule
+from mail_agent_core.brain import AgentBrain
 from mail_agent_core.identity import IdentityManager
 from mail_agent_core.models import (
     AgentBehaviorSettings,
@@ -13,6 +14,7 @@ from mail_agent_core.models import (
 )
 
 from .action_executor import MailActionExecutor
+from .agent_queue import AgentWorkQueue
 from .audit import AuditLog
 from .mail_store import MailStore
 from .state import JsonStateStore
@@ -35,6 +37,7 @@ class AgentRuntime:
         providers: dict[str, Any],
         audit_log: AuditLog,
         action_executor: MailActionExecutor | None = None,
+        brain: AgentBrain | None = None,
     ):
         self.mail_agent = mail_agent
         self.identity_manager = identity_manager
@@ -43,6 +46,8 @@ class AgentRuntime:
         self.providers = providers
         self.audit_log = audit_log
         self.action_executor = action_executor
+        self.brain = brain or AgentBrain(mail_store.path.parent / "brain")
+        self.work_queue = AgentWorkQueue(mail_store)
 
     def _configuration(self) -> dict[str, Any]:
         state = self.state_store.read()
@@ -99,6 +104,10 @@ class AgentRuntime:
         threshold = behavior.minimum_confidence if minimum_confidence is None else minimum_confidence
         message = self._with_thread_context(message, behavior)
 
+        # The brain is local persistent context. It never replaces deterministic policy or identity checks.
+        self.brain.ensure(identity, profile)
+        brain_context = self.brain.build_context(message)
+
         analysis = await self.mail_agent.analyze(
             profile=profile,
             provider=provider,
@@ -106,6 +115,7 @@ class AgentRuntime:
             message=message,
             identity=identity,
             sign_payload=self.identity_manager.sign,
+            brain_context=brain_context,
         )
 
         rule_mode, priority, category = apply_rule_overrides(
@@ -134,6 +144,11 @@ class AgentRuntime:
             category=analysis.proposal.category.value,
             summary=analysis.proposal.summary,
             needs_reply=analysis.proposal.needs_reply,
+        )
+        self.brain.record_analysis(
+            message=message,
+            proposal=analysis.proposal,
+            policy=analysis.policy,
         )
 
         approval = None
@@ -165,6 +180,7 @@ class AgentRuntime:
         payload["confidence_threshold"] = threshold
         payload["confidence_accepted"] = confidence_ok
         payload["rule_mode"] = rule_mode.value
+        payload["brain"] = self.brain.public_status()
         return payload
 
     async def run_mailbox(self, mailbox_id: str, *, force: bool = False) -> dict[str, Any]:
@@ -176,7 +192,9 @@ class AgentRuntime:
             if not behavior_is_active(behavior):
                 return {"mailbox_id": mailbox_id, "processed": 0, "skipped": "outside_schedule"}
 
-        messages = self.mail_store.list_messages(mailbox_id, behavior.max_messages_per_cycle)
+        # Filter processing state before LIMIT. This guarantees that older backlog rows are eventually reached.
+        pending_before = self.work_queue.pending_count(mailbox_id)
+        messages = self.work_queue.list_pending(mailbox_id, behavior.max_messages_per_cycle)
         processed = 0
         ignored = 0
         urgent = 0
@@ -185,10 +203,8 @@ class AgentRuntime:
         executed = 0
         below_confidence = 0
         errors = 0
-        for item in reversed(messages):
+        for item in messages:
             message_id = str(item.get("remote_id") or item.get("internet_message_id") or item.get("uid"))
-            if self.mail_store.is_agent_processed(mailbox_id, message_id):
-                continue
             rule = matching_rule(str(item.get("sender") or ""), behavior)
             if rule is not None and rule.mode == RuleMode.IGNORE:
                 self.mail_store.record_agent_processing(mailbox_id, message_id, status="ignored_rule")
@@ -238,6 +254,7 @@ class AgentRuntime:
                     details={"mailbox_id": mailbox_id, "message_id": message_id, "error": str(exc)},
                 )
 
+        pending_after = self.work_queue.pending_count(mailbox_id)
         summary = {
             "mailbox_id": mailbox_id,
             "processed": processed,
@@ -248,6 +265,9 @@ class AgentRuntime:
             "executed": executed,
             "below_confidence": below_confidence,
             "errors": errors,
+            "pending_before": pending_before,
+            "pending_after": pending_after,
+            "brain": self.brain.public_status(),
         }
         self.audit_log.append("agent_cycle_completed", details=summary)
         return summary
