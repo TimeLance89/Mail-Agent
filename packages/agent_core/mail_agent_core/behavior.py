@@ -47,7 +47,7 @@ def apply_rule_overrides(
     rule = matching_rule(sender, settings)
     if rule is None:
         if sender_matches(sender, settings.never_auto_act_senders):
-            return RuleMode.IGNORE, priority, category
+            return RuleMode.ANALYZE_ONLY, priority, category
         if sender_matches(sender, settings.vip_senders) and priority in {MailPriority.NORMAL, MailPriority.LOW}:
             priority = MailPriority.HIGH
         return RuleMode.NORMAL, priority, category
