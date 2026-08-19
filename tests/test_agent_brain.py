@@ -17,7 +17,7 @@ from mail_agent_gateway.agent_queue import AgentWorkQueue
 from mail_agent_gateway.mail_store import MailStore, StoredMessage
 
 
-def test_brain_creates_soul_memory_and_structured_contact_memory(tmp_path: Path):
+def _identity_and_profile(tmp_path: Path):
     identity = IdentityManager(tmp_path / "identity").create(
         owner_id="owner@example.com",
         agent_name="Nova",
@@ -29,6 +29,11 @@ def test_brain_creates_soul_memory_and_structured_contact_memory(tmp_path: Path)
         usage_type=UsageType.PRIVATE,
         autonomy_mode=AutonomyMode.ASSISTANT,
     )
+    return identity, profile
+
+
+def test_brain_creates_soul_memory_and_structured_contact_memory(tmp_path: Path):
+    identity, profile = _identity_and_profile(tmp_path)
     brain = AgentBrain(tmp_path / "brain")
     brain.ensure(identity, profile)
 
@@ -64,6 +69,18 @@ def test_brain_creates_soul_memory_and_structured_contact_memory(tmp_path: Path)
     assert "alice@example.com" not in context  # sender key is implicit; only structured values are injected
     assert '"interaction_count": 1' in context
     assert brain.public_status()["journal_events"] == 1
+
+
+def test_owner_memory_survives_future_brain_initialization(tmp_path: Path):
+    identity, profile = _identity_and_profile(tmp_path)
+    brain = AgentBrain(tmp_path / "brain")
+    brain.ensure(identity, profile)
+    brain.update_owner_memory(memory="# MEMORY.md\n\n- Rechnungen immer knapp zusammenfassen.")
+
+    # ensure() runs on every analysis and must never reset owner-maintained memory.
+    brain.ensure(identity, profile)
+
+    assert "Rechnungen immer knapp" in (tmp_path / "brain" / "MEMORY.md").read_text(encoding="utf-8")
 
 
 def _message(uid: int) -> StoredMessage:
