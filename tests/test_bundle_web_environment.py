@@ -7,6 +7,14 @@ from pathlib import Path
 from mail_agent_launcher import main as launcher
 
 
+def _prime_runtime_env(monkeypatch, tmp_path: Path) -> None:
+    monkeypatch.setenv("MAIL_AGENT_DATA_DIR", str(tmp_path / "existing-gateway"))
+    monkeypatch.setenv("MAIL_AGENT_REGISTRY_DB", str(tmp_path / "existing-registry.db"))
+    monkeypatch.setenv("MAIL_AGENT_REGISTRY_URL", "http://127.0.0.1:8770")
+    monkeypatch.setenv("MAIL_AGENT_GATEWAY_HOST", "127.0.0.1")
+    monkeypatch.setenv("MAIL_AGENT_GATEWAY_PORT", "8765")
+
+
 def test_frozen_start_replaces_stale_inherited_web_bundle_path(monkeypatch, tmp_path: Path):
     old_bundle = tmp_path / "old-meipass" / "mail_agent_web"
     new_bundle_root = tmp_path / "new-meipass"
@@ -14,6 +22,7 @@ def test_frozen_start_replaces_stale_inherited_web_bundle_path(monkeypatch, tmp_
     new_bundle.mkdir(parents=True)
     (new_bundle / "index.html").write_text("<html>MAIL-AGENT</html>", encoding="utf-8")
 
+    _prime_runtime_env(monkeypatch, tmp_path)
     monkeypatch.setenv("MAIL_AGENT_WEB_DIR", str(old_bundle))
     monkeypatch.setattr(sys, "_MEIPASS", str(new_bundle_root), raising=False)
 
@@ -27,6 +36,7 @@ def test_frozen_start_replaces_stale_inherited_web_bundle_path(monkeypatch, tmp_
 def test_source_start_keeps_explicit_web_override(monkeypatch, tmp_path: Path):
     explicit_web = tmp_path / "custom-web"
     explicit_web.mkdir()
+    _prime_runtime_env(monkeypatch, tmp_path)
     monkeypatch.setenv("MAIL_AGENT_WEB_DIR", str(explicit_web))
     monkeypatch.delattr(sys, "_MEIPASS", raising=False)
 
