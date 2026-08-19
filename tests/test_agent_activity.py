@@ -89,6 +89,27 @@ def test_activity_summary_separates_sync_and_mail_traces(tmp_path):
     assert summary["avg_llm_ms"] == 200
 
 
+def test_activity_store_filters_traces_by_mailbox(tmp_path):
+    store = AgentActivityStore(tmp_path / "activity.jsonl")
+    for mailbox_id in ("mb_1", "mb_2"):
+        trace_id = store.begin_message(
+            mailbox_id=mailbox_id,
+            message_id=f"message-{mailbox_id}",
+            thread_id=None,
+            sender=f"{mailbox_id}@example.com",
+            subject=f"Mail {mailbox_id}",
+            provider="ollama",
+            model="qwen",
+            trigger="cycle",
+        )
+        store.finish(trace_id, outcome="no_action", reason="Keine Aktion nötig")
+
+    traces = store.recent_traces(10, mailbox_id="mb_2")
+    assert len(traces) == 1
+    assert traces[0]["mailbox_id"] == "mb_2"
+    assert traces[0]["message_id"] == "message-mb_2"
+
+
 def test_activity_store_tolerates_corrupt_jsonl(tmp_path):
     path = tmp_path / "activity.jsonl"
     path.write_text("{broken\n", encoding="utf-8")
