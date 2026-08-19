@@ -8,7 +8,7 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_reliability_routes_and_startup_recovery_are_wired():
     main = (ROOT / "apps/gateway/mail_agent_gateway/main.py").read_text(encoding="utf-8")
-    assert 'APP_VERSION = "0.13.0"' in main
+    assert 'APP_VERSION = "0.13.1"' in main
     assert "RecoveryManager(" in main
     assert "recovery_manager.recover_stale_executions()" in main
     assert '@app.get("/v1/system/health")' in main
@@ -39,7 +39,7 @@ def test_system_health_ui_and_uncertain_send_reconciliation_are_visible():
     assert "/v1/system/recovery/approvals/" in app
 
 
-def test_013_version_is_synchronized():
+def test_0131_hotfix_version_is_synchronized_for_release_build():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     gateway = (ROOT / "apps/gateway/mail_agent_gateway/main.py").read_text(encoding="utf-8")
     launcher = (ROOT / "apps/launcher/mail_agent_launcher/main.py").read_text(encoding="utf-8")
@@ -49,10 +49,14 @@ def test_013_version_is_synchronized():
     installer = (ROOT / "packaging/windows/MailAgent.iss").read_text(encoding="utf-8")
     desktop = (ROOT / "apps/web/desktop-links.js").read_text(encoding="utf-8")
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
-    assert 'version = "0.13.0"' in pyproject
-    assert 'APP_VERSION = "0.13.0"' in gateway
-    assert 'APP_VERSION = "0.13.0"' in launcher
-    assert 'app_version: str = "0.13.0"' in identity
-    assert '#define MyAppVersion "0.13.0"' in installer
-    assert "const APP_VERSION = '0.13.0'" in desktop
+    workflow = (ROOT / ".github/workflows/build-installers.yml").read_text(encoding="utf-8")
+
+    assert 'version = "0.13.1"' in pyproject
+    assert 'APP_VERSION = "0.13.1"' in gateway
+    assert 'APP_VERSION = "0.13.1"' in launcher
+    assert 'app_version: str = "0.13.1"' in identity
+    assert '#define MyAppVersion "0.13.1"' in installer
+    assert "const APP_VERSION = '0.13.1'" in desktop
     assert "/assets/desktop-links.js" in index
+    assert '"apps/gateway/mail_agent_gateway/main.py"' in workflow
+    assert '"apps/launcher/mail_agent_launcher/main.py"' in workflow
