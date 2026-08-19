@@ -36,5 +36,5 @@ Name: "{autodesktop}\MAIL-AGENT"; Filename: "{app}\{#MyAppExeName}"; Tasks: desk
 Name: "desktopicon"; Description: "Desktop-Verknüpfung erstellen"; GroupDescription: "Zusätzliche Verknüpfungen:"; Flags: unchecked
 
 [Run]
-Filename: "{tmp}\restart-mail-agent.cmd"; Parameters: """{app}\{#MyAppExeName}"" "{#MyAppVersion}" "open-browser""; Description: "MAIL-AGENT jetzt starten"; Flags: runhidden postinstall skipifsilent
-Filename: "{tmp}\restart-mail-agent.cmd"; Parameters: """{app}\{#MyAppExeName}"" "{#MyAppVersion}" "no-browser""; Flags: runhidden skipifnotsilent
+Filename: "{tmp}\restart-mail-agent.cmd"; Parameters: """{app}\{#MyAppExeName}"" ""{#MyAppVersion}"" ""open-browser"""; Description: "MAIL-AGENT jetzt starten"; Flags: runhidden postinstall skipifsilent
+Filename: "{tmp}\restart-mail-agent.cmd"; Parameters: """{app}\{#MyAppExeName}"" ""{#MyAppVersion}"" ""no-browser"""; Flags: runhidden skipifnotsilent
