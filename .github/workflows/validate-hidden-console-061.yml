@@ -1,0 +1,50 @@
+name: Validate hidden console 0.6.1
+
+permissions:
+  contents: write
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    if: github.event.pull_request.head.ref == 'fix/windows-hidden-subprocesses-0.6.1'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: fix/windows-hidden-subprocesses-0.6.1
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply version synchronization when pending
+        run: |
+          if [ -f tools/apply_hidden_console_061.py ]; then
+            python tools/apply_hidden_console_061.py
+          else
+            echo "Version synchronization already persisted"
+          fi
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Validate product state
+        run: |
+          python -m pytest -q
+          python -m compileall -q apps packages connectors
+          node --check apps/web/app.js
+          git diff --check
+      - name: Persist synchronization after green tests
+        shell: bash
+        run: |
+          if [ ! -f tools/apply_hidden_console_061.py ]; then
+            echo "Nothing to persist"
+            exit 0
+          fi
+          rm -f tools/apply_hidden_console_061.py
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git commit -m "release: synchronize MAIL-AGENT 0.6.1 runtime versions"
+          git push origin HEAD:fix/windows-hidden-subprocesses-0.6.1
