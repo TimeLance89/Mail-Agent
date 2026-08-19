@@ -1,6 +1,9 @@
 @echo off
 setlocal EnableExtensions
 set "PYINSTALLER_RESET_ENVIRONMENT=1"
+rem MAIL_AGENT_WEB_DIR points into the one-file PyInstaller _MEIPASS directory. Never carry the
+rem previous process' temporary path into the freshly installed executable.
+set "MAIL_AGENT_WEB_DIR="
 set "APP_EXE=%~1"
 set "EXPECTED_VERSION=%~2"
 set "START_MODE=%~3"
