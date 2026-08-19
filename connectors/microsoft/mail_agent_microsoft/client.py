@@ -261,7 +261,20 @@ class MicrosoftGraphClient:
         async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers) as client:
             response = await client.post(
                 f"{self._message_path(source_message_id)}/createReply",
-                json={},
+                content=b"",
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def create_forward_draft(self, source_message_id: str, recipient: str) -> dict:
+        payload = {
+            "toRecipients": [{"emailAddress": {"address": recipient}}],
+            "comment": "",
+        }
+        async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers) as client:
+            response = await client.post(
+                f"{self._message_path(source_message_id)}/createForward",
+                json=payload,
             )
             response.raise_for_status()
             return response.json()
@@ -313,18 +326,29 @@ class MicrosoftGraphClient:
             "conversationId": draft.get("conversationId"),
         }
 
-    async def send_mail(self, *, to: str, subject: str, body: str) -> None:
-        payload = {
-            "message": {
-                "subject": subject,
-                "body": {"contentType": "Text", "content": body},
-                "toRecipients": [{"emailAddress": {"address": to}}],
-            },
-            "saveToSentItems": True,
+    async def send_forward(
+        self,
+        *,
+        source_message_id: str,
+        recipient: str,
+        subject: str,
+        body: str,
+    ) -> dict:
+        draft = await self.create_forward_draft(source_message_id, recipient)
+        draft_id = str(draft.get("id") or "")
+        if not draft_id:
+            raise RuntimeError("Microsoft Graph did not return a forward draft ID")
+        await self.update_draft(
+            draft_id,
+            recipient=recipient,
+            subject=subject,
+            body=body,
+        )
+        await self.send_draft(draft_id)
+        return {
+            "id": draft_id,
+            "conversationId": draft.get("conversationId"),
         }
-        async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers) as client:
-            response = await client.post(f"{GRAPH_BASE}/me/sendMail", json=payload)
-            response.raise_for_status()
 
 
 def stable_remote_uid(remote_id: str) -> int:
