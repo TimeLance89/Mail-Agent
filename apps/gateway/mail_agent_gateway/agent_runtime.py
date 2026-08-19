@@ -2,10 +2,15 @@ from __future__ import annotations
 
 from typing import Any
 
-from mail_agent_core.agent import MailAgent, MailMessageContext
-from mail_agent_core.behavior import behavior_is_active, sender_matches
+from mail_agent_core.agent import MailAgent, MailMessageContext, ThreadMessageContext
+from mail_agent_core.behavior import apply_rule_overrides, behavior_is_active, matching_rule
 from mail_agent_core.identity import IdentityManager
-from mail_agent_core.models import AgentBehaviorSettings, AgentProfile
+from mail_agent_core.models import (
+    AgentBehaviorSettings,
+    AgentProfile,
+    MailActionType,
+    RuleMode,
+)
 
 from .audit import AuditLog
 from .mail_store import MailStore
@@ -41,6 +46,32 @@ class AgentRuntime:
     def behavior(config: dict[str, Any]) -> AgentBehaviorSettings:
         return AgentBehaviorSettings.model_validate(config.get("behavior") or {})
 
+    def _with_thread_context(
+        self,
+        message: MailMessageContext,
+        behavior: AgentBehaviorSettings,
+    ) -> MailMessageContext:
+        if message.thread_context or not message.thread_id or behavior.thread_context_messages == 0:
+            return message
+        stored = self.mail_store.list_thread_messages(
+            message.mailbox_id,
+            message.thread_id,
+            limit=behavior.thread_context_messages,
+            exclude_message_id=message.message_id,
+        )
+        context = [
+            ThreadMessageContext(
+                message_id=str(item.get("remote_id") or item.get("internet_message_id") or item.get("uid")),
+                sender=str(item.get("sender") or ""),
+                recipients=list(item.get("recipients") or []),
+                subject=str(item.get("subject") or ""),
+                body=str(item.get("body_text") or ""),
+                sent_at=item.get("sent_at"),
+            )
+            for item in stored
+        ]
+        return message.model_copy(update={"thread_context": context})
+
     async def analyze_message(
         self,
         message: MailMessageContext,
@@ -57,6 +88,7 @@ class AgentRuntime:
         profile = AgentProfile.model_validate(config["profile"])
         behavior = self.behavior(config)
         threshold = behavior.minimum_confidence if minimum_confidence is None else minimum_confidence
+        message = self._with_thread_context(message, behavior)
 
         analysis = await self.mail_agent.analyze(
             profile=profile,
@@ -67,10 +99,36 @@ class AgentRuntime:
             sign_payload=self.identity_manager.sign,
         )
 
+        rule_mode, priority, category = apply_rule_overrides(
+            sender=message.sender,
+            settings=behavior,
+            priority=analysis.proposal.priority,
+            category=analysis.proposal.category,
+        )
+        analysis.proposal.priority = priority
+        analysis.proposal.category = category
+
+        if rule_mode == RuleMode.DRAFT_ONLY and analysis.proposal.action in {
+            MailActionType.SEND_REPLY,
+            MailActionType.FORWARD,
+        }:
+            analysis.proposal.action = MailActionType.CREATE_DRAFT
+            analysis.policy = self.mail_agent.policy_engine.evaluate(profile, analysis.proposal)
+
+        self.mail_store.update_message_intelligence(
+            message.mailbox_id,
+            message.message_id,
+            priority=analysis.proposal.priority.value,
+            category=analysis.proposal.category.value,
+            summary=analysis.proposal.summary,
+            needs_reply=analysis.proposal.needs_reply,
+        )
+
         approval = None
         draft = None
         confidence_ok = analysis.proposal.confidence >= threshold
-        if create_artifacts and confidence_ok and analysis.policy.allowed:
+        artifacts_allowed = rule_mode not in {RuleMode.ANALYZE_ONLY, RuleMode.IGNORE}
+        if create_artifacts and artifacts_allowed and confidence_ok and analysis.policy.allowed:
             if analysis.policy.requires_approval:
                 approval = self.mail_store.enqueue_approval(analysis.proposal, analysis.policy)
             if (
@@ -88,6 +146,7 @@ class AgentRuntime:
         payload["draft"] = draft
         payload["confidence_threshold"] = threshold
         payload["confidence_accepted"] = confidence_ok
+        payload["rule_mode"] = rule_mode.value
         return payload
 
     async def run_mailbox(self, mailbox_id: str, *, force: bool = False) -> dict[str, Any]:
@@ -101,6 +160,8 @@ class AgentRuntime:
 
         messages = self.mail_store.list_messages(mailbox_id, behavior.max_messages_per_cycle)
         processed = 0
+        ignored = 0
+        urgent = 0
         drafts = 0
         approvals = 0
         below_confidence = 0
@@ -109,8 +170,10 @@ class AgentRuntime:
             message_id = str(item.get("remote_id") or item.get("internet_message_id") or item.get("uid"))
             if self.mail_store.is_agent_processed(mailbox_id, message_id):
                 continue
-            if sender_matches(str(item.get("sender") or ""), behavior.never_auto_act_senders):
-                self.mail_store.record_agent_processing(mailbox_id, message_id, status="blocked_sender")
+            rule = matching_rule(str(item.get("sender") or ""), behavior)
+            if rule is not None and rule.mode == RuleMode.IGNORE:
+                self.mail_store.record_agent_processing(mailbox_id, message_id, status="ignored_rule")
+                ignored += 1
                 continue
             context = MailMessageContext(
                 mailbox_id=mailbox_id,
@@ -120,10 +183,13 @@ class AgentRuntime:
                 recipients=list(item.get("recipients") or []),
                 subject=str(item.get("subject") or ""),
                 body=str(item.get("body_text") or ""),
+                sent_at=item.get("sent_at"),
             )
             try:
                 result = await self.analyze_message(context, create_artifacts=True)
                 proposal = result["proposal"]
+                if proposal.get("priority") == "urgent":
+                    urgent += 1
                 if not result["confidence_accepted"]:
                     below_confidence += 1
                     status = "below_confidence"
@@ -155,6 +221,8 @@ class AgentRuntime:
         summary = {
             "mailbox_id": mailbox_id,
             "processed": processed,
+            "ignored": ignored,
+            "urgent": urgent,
             "drafts": drafts,
             "approvals": approvals,
             "below_confidence": below_confidence,
