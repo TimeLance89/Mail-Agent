@@ -1,5 +1,5 @@
 #define MyAppName "MAIL-AGENT"
-#define MyAppVersion "0.13.5"
+#define MyAppVersion "0.13.6"
 #define MyAppPublisher "MAIL-AGENT"
 #define MyAppExeName "Mail-Agent.exe"
 
@@ -36,5 +36,5 @@ Name: "{autodesktop}\MAIL-AGENT"; Filename: "{app}\{#MyAppExeName}"; Tasks: desk
 Name: "desktopicon"; Description: "Desktop-Verknüpfung erstellen"; GroupDescription: "Zusätzliche Verknüpfungen:"; Flags: unchecked
 
 [Run]
-Filename: "{tmp}\restart-mail-agent.cmd"; Parameters: """{app}\{#MyAppExeName}"""; Description: "MAIL-AGENT jetzt starten"; Flags: runhidden postinstall skipifsilent
-Filename: "{tmp}\restart-mail-agent.cmd"; Parameters: """{app}\{#MyAppExeName}"""; Flags: runhidden skipifnotsilent
+Filename: "{tmp}\restart-mail-agent.cmd"; Parameters: """{app}\{#MyAppExeName}"" ""{#MyAppVersion}"" ""open-browser"""; Description: "MAIL-AGENT jetzt starten"; Flags: runhidden postinstall skipifsilent
+Filename: "{tmp}\restart-mail-agent.cmd"; Parameters: """{app}\{#MyAppExeName}"" ""{#MyAppVersion}"" ""no-browser"""; Flags: runhidden skipifnotsilent
