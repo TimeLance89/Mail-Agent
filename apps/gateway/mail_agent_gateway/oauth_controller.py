@@ -50,7 +50,7 @@ class OAuthController:
                 "configured": bool(self.settings.microsoft_client_id),
                 "redirect_uri": self.settings.microsoft_redirect_uri,
                 "tenant": self.settings.microsoft_tenant,
-                "scope": "Mail.Read + offline_access",
+                "scope": "Mail.ReadWrite + Mail.Send + offline_access",
             },
         }
 
@@ -71,7 +71,10 @@ class OAuthController:
             code_challenge=challenge,
             login_hint=login_hint,
         )
-        self.audit_log.append("oauth_started", details={"provider": "google", "state": session.state})
+        self.audit_log.append(
+            "oauth_started",
+            details={"provider": "google", "state": session.state},
+        )
         return OAuthStartResult("google", session.state, url)
 
     def start_microsoft(self, login_hint: str | None = None) -> OAuthStartResult:
@@ -94,7 +97,10 @@ class OAuthController:
             code_challenge=challenge,
             login_hint=login_hint,
         )
-        self.audit_log.append("oauth_started", details={"provider": "microsoft", "state": session.state})
+        self.audit_log.append(
+            "oauth_started",
+            details={"provider": "microsoft", "state": session.state},
+        )
         return OAuthStartResult("microsoft", session.state, url)
 
     async def complete_google(self, *, state: str, code: str) -> dict:
@@ -102,7 +108,10 @@ class OAuthController:
         if session.provider != "google" or session.status != "pending":
             raise RuntimeError("Invalid Google OAuth session")
         try:
-            client = GoogleOAuthClient(self.settings.google_client_id, self.settings.google_client_secret)
+            client = GoogleOAuthClient(
+                self.settings.google_client_id,
+                self.settings.google_client_secret,
+            )
             tokens = await client.exchange_code(
                 code=code,
                 redirect_uri=session.redirect_uri,
@@ -128,15 +137,27 @@ class OAuthController:
                     "scope": tokens.scope,
                 }
             )
-            self.sessions.update(state, status="complete", mailbox_id=mailbox_id, email_address=email)
+            self.sessions.update(
+                state,
+                status="complete",
+                mailbox_id=mailbox_id,
+                email_address=email,
+            )
             self.audit_log.append(
                 "oauth_connected",
-                details={"provider": "google", "mailbox_id": mailbox_id, "email_address": email},
+                details={
+                    "provider": "google",
+                    "mailbox_id": mailbox_id,
+                    "email_address": email,
+                },
             )
             return self.sessions.get(state).public()
         except Exception as exc:
             self.sessions.update(state, status="error", error=str(exc))
-            self.audit_log.append("oauth_failed", details={"provider": "google", "error": str(exc)})
+            self.audit_log.append(
+                "oauth_failed",
+                details={"provider": "google", "error": str(exc)},
+            )
             raise
 
     async def complete_microsoft(self, *, state: str, code: str) -> dict:
@@ -153,6 +174,8 @@ class OAuthController:
                 redirect_uri=session.redirect_uri,
                 code_verifier=session.code_verifier,
             )
+            if not tokens.refresh_token:
+                raise RuntimeError("Microsoft did not issue a refresh token; reconnect the mailbox")
             profile = await MicrosoftGraphClient(tokens.access_token).profile()
             email = profile.get("mail") or profile.get("userPrincipalName")
             if not email:
@@ -169,17 +192,30 @@ class OAuthController:
                     "display_name": profile.get("displayName") or "",
                     "credential_ref": credential_ref,
                     "credential_state": "encrypted-oauth-vault",
+                    "scope": tokens.scope,
                 }
             )
-            self.sessions.update(state, status="complete", mailbox_id=mailbox_id, email_address=email)
+            self.sessions.update(
+                state,
+                status="complete",
+                mailbox_id=mailbox_id,
+                email_address=email,
+            )
             self.audit_log.append(
                 "oauth_connected",
-                details={"provider": "microsoft", "mailbox_id": mailbox_id, "email_address": email},
+                details={
+                    "provider": "microsoft",
+                    "mailbox_id": mailbox_id,
+                    "email_address": email,
+                },
             )
             return self.sessions.get(state).public()
         except Exception as exc:
             self.sessions.update(state, status="error", error=str(exc))
-            self.audit_log.append("oauth_failed", details={"provider": "microsoft", "error": str(exc)})
+            self.audit_log.append(
+                "oauth_failed",
+                details={"provider": "microsoft", "error": str(exc)},
+            )
             raise
 
     def fail(self, *, state: str, provider: str, error: str) -> None:
@@ -187,7 +223,10 @@ class OAuthController:
             self.sessions.update(state, status="error", error=error)
         except KeyError:
             return
-        self.audit_log.append("oauth_failed", details={"provider": provider, "error": error})
+        self.audit_log.append(
+            "oauth_failed",
+            details={"provider": provider, "error": error},
+        )
 
 
 def _mailbox_id(provider: str, email_address: str) -> str:
