@@ -75,6 +75,38 @@ def test_notification_tracker_baselines_existing_work_and_deduplicates():
     ) == []
 
 
+def test_health_warnings_cover_sync_provider_and_recovery():
+    tracker = NotificationTracker()
+    tracker.observe(approvals=[], drafts=[], health={"checks": []})
+
+    sync_events = tracker.observe(
+        approvals=[],
+        drafts=[],
+        health={"checks": [{"id": "mailbox:mb_1", "status": "warning"}]},
+    )
+    assert [(event.title, event.view) for event in sync_events] == [
+        ("Postfach prüfen", "system")
+    ]
+
+    provider_events = tracker.observe(
+        approvals=[],
+        drafts=[],
+        health={"checks": [{"id": "provider", "status": "error"}]},
+    )
+    assert [(event.title, event.view) for event in provider_events] == [
+        ("KI-Provider prüfen", "system")
+    ]
+
+    recovery_events = tracker.observe(
+        approvals=[],
+        drafts=[],
+        health={"checks": [{"id": "execution", "status": "warning"}]},
+    )
+    assert [(event.title, event.view) for event in recovery_events] == [
+        ("Mail-Aktion prüfen", "approvals")
+    ]
+
+
 def test_draft_with_approval_only_notifies_as_approval():
     tracker = NotificationTracker()
     tracker.observe(approvals=[], drafts=[], health={"checks": []})
