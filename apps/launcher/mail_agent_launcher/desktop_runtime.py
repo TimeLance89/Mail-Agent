@@ -222,7 +222,7 @@ class NotificationTracker:
         self.approval_ids = approval_ids
         self.draft_ids = draft_ids
         self.health_issue_keys = health_issue_keys
-        self.priority_message_ids = priority_message_ids
+        self.priority_message_ids.update(priority_message_ids)
         return notifications
 
 
