@@ -23,7 +23,7 @@ class FakeMicrosoft:
         self.moved = []
         self.trashed = []
         self.replies = []
-        self.sent = []
+        self.forwards = []
 
     async def mark_read(self, message_id):
         self.read.append(message_id)
@@ -49,8 +49,9 @@ class FakeMicrosoft:
         self.replies.append(kwargs)
         return {"id": "reply-draft", "conversationId": "conv-1"}
 
-    async def send_mail(self, **kwargs):
-        self.sent.append(kwargs)
+    async def send_forward(self, **kwargs):
+        self.forwards.append(kwargs)
+        return {"id": "forward-draft", "conversationId": "conv-1"}
 
 
 def make_executor(tmp_path):
@@ -159,16 +160,16 @@ def test_microsoft_delete_requires_approval_and_soft_deletes(tmp_path):
     assert store.get_message("mb-ms", "graph-message-1") is None
 
 
-def test_microsoft_signed_reply_uses_real_reply_chain_once(tmp_path):
+def _approved_outbound(tmp_path, action: MailActionType, recipient: str):
     executor, store, manager, identity, fake = make_executor(tmp_path)
     proposal = MailActionProposal(
-        action=MailActionType.SEND_REPLY,
+        action=action,
         mailbox_id="mb-ms",
         message_id="graph-message-1",
         thread_id="thread",
-        recipient="person@example.test",
-        subject="Re: Hello",
-        body="Answer",
+        recipient=recipient,
+        subject="Re: Hello" if action == MailActionType.SEND_REPLY else "Fwd: Hello",
+        body="Answer" if action == MailActionType.SEND_REPLY else "Forward note",
         confidence=0.98,
     )
     signed = stamp_outgoing_proposal(proposal, identity, sign_payload=manager.sign)
@@ -177,9 +178,17 @@ def test_microsoft_signed_reply_uses_real_reply_chain_once(tmp_path):
         PolicyDecision(allowed=True, requires_approval=True, risk="high", reason="send"),
     )
     store.decide_approval(approval["approval_id"], decision="approved", actor="owner")
+    return executor, store, fake, approval["approval_id"]
 
-    first = asyncio.run(executor.execute_approval(approval["approval_id"]))
-    second = asyncio.run(executor.execute_approval(approval["approval_id"]))
+
+def test_microsoft_signed_reply_uses_real_reply_chain_once(tmp_path):
+    executor, store, fake, approval_id = _approved_outbound(
+        tmp_path,
+        MailActionType.SEND_REPLY,
+        "person@example.test",
+    )
+    first = asyncio.run(executor.execute_approval(approval_id))
+    second = asyncio.run(executor.execute_approval(approval_id))
 
     assert first["execution_status"] == "sent"
     assert second["execution_status"] == "sent"
@@ -187,3 +196,20 @@ def test_microsoft_signed_reply_uses_real_reply_chain_once(tmp_path):
     assert fake.replies[0]["source_message_id"] == "graph-message-1"
     assert fake.replies[0]["recipient"] == "person@example.test"
     assert "MAIL-AGENT-ID" in fake.replies[0]["body"]
+
+
+def test_microsoft_signed_forward_uses_native_forward_chain_once(tmp_path):
+    executor, store, fake, approval_id = _approved_outbound(
+        tmp_path,
+        MailActionType.FORWARD,
+        "colleague@example.test",
+    )
+    first = asyncio.run(executor.execute_approval(approval_id))
+    second = asyncio.run(executor.execute_approval(approval_id))
+
+    assert first["execution_status"] == "sent"
+    assert second["execution_status"] == "sent"
+    assert len(fake.forwards) == 1
+    assert fake.forwards[0]["source_message_id"] == "graph-message-1"
+    assert fake.forwards[0]["recipient"] == "colleague@example.test"
+    assert "MAIL-AGENT-ID" in fake.forwards[0]["body"]
