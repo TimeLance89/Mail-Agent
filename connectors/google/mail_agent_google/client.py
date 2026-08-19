@@ -139,6 +139,47 @@ class GoogleGmailClient:
             response.raise_for_status()
             return response.json()
 
+    async def list_labels(self) -> list[dict]:
+        async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers) as client:
+            response = await client.get(f"{GMAIL_API}/users/me/labels")
+            response.raise_for_status()
+            return list(response.json().get("labels", []))
+
+    async def resolve_label_id(self, name: str) -> str:
+        wanted = name.strip().casefold()
+        if not wanted:
+            raise ValueError("Destination label is empty")
+        labels = await self.list_labels()
+        for label in labels:
+            if str(label.get("name") or "").strip().casefold() == wanted:
+                return str(label["id"])
+        raise ValueError(f"Gmail label does not exist: {name}")
+
+    async def modify_message(
+        self,
+        message_id: str,
+        *,
+        add_label_ids: list[str] | None = None,
+        remove_label_ids: list[str] | None = None,
+    ) -> dict:
+        payload = {
+            "addLabelIds": list(add_label_ids or []),
+            "removeLabelIds": list(remove_label_ids or []),
+        }
+        async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers) as client:
+            response = await client.post(
+                f"{GMAIL_API}/users/me/messages/{message_id}/modify",
+                json=payload,
+            )
+            response.raise_for_status()
+            return response.json()
+
+    async def trash_message(self, message_id: str) -> dict:
+        async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers) as client:
+            response = await client.post(f"{GMAIL_API}/users/me/messages/{message_id}/trash")
+            response.raise_for_status()
+            return response.json()
+
     async def list_message_ids(self, *, max_results: int = 100, label_id: str = "INBOX") -> list[str]:
         max_results = max(1, min(max_results, 500))
         async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers) as client:
