@@ -16,6 +16,7 @@ ALLOWED_DESKTOP_VIEWS = {
     "drafts",
     "settings",
 }
+IMPORTANT_PRIORITIES = {"high", "urgent"}
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ class NotificationTracker:
     approval_ids: set[str] = field(default_factory=set)
     draft_ids: set[str] = field(default_factory=set)
     health_issue_keys: set[str] = field(default_factory=set)
+    priority_message_ids: set[str] = field(default_factory=set)
 
     @staticmethod
     def _health_issues(health: dict[str, Any]) -> set[str]:
@@ -97,6 +99,57 @@ class NotificationTracker:
             )
         return notifications
 
+    @staticmethod
+    def _message_key(item: dict[str, Any]) -> str | None:
+        mailbox_id = str(item.get("mailbox_id") or "")
+        message_id = item.get("remote_id") or item.get("internet_message_id") or item.get("uid")
+        if message_id is None:
+            return None
+        return f"{mailbox_id}:{message_id}"
+
+    @classmethod
+    def _important_messages(cls, health: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for item in health.get("_desktop_priority_messages", []) or []:
+            if not isinstance(item, dict):
+                continue
+            priority = str(item.get("agent_priority") or "").lower()
+            category = str(item.get("agent_category") or "").lower()
+            needs_reply = item.get("needs_reply") is True
+            important = priority in IMPORTANT_PRIORITIES or (category == "security" and needs_reply)
+            if not important:
+                continue
+            key = cls._message_key(item)
+            if key:
+                result[key] = item
+        return result
+
+    @staticmethod
+    def _priority_notification(items: list[dict[str, Any]]) -> DesktopNotification:
+        priorities = {str(item.get("agent_priority") or "").lower() for item in items}
+        categories = {str(item.get("agent_category") or "").lower() for item in items}
+        needs_reply = any(item.get("needs_reply") is True for item in items)
+        count = len(items)
+
+        if "urgent" in priorities:
+            title = "Dringende E-Mail erkannt"
+            message = (
+                "Eine neue dringende Nachricht wartet in deiner Inbox."
+                if count == 1
+                else f"{count} neue wichtige Nachrichten warten in deiner Inbox."
+            )
+        elif "security" in categories:
+            title = "Sicherheitsrelevante E-Mail erkannt"
+            message = "Eine neue sicherheitsrelevante Nachricht sollte geprüft werden."
+        else:
+            title = "Wichtige E-Mail erkannt"
+            message = (
+                "Eine wichtige Nachricht benötigt wahrscheinlich eine Antwort."
+                if needs_reply
+                else "Eine neue wichtige Nachricht wartet in deiner Inbox."
+            )
+        return DesktopNotification(title=title, message=message, view="inbox")
+
     def observe(
         self,
         *,
@@ -115,19 +168,29 @@ class NotificationTracker:
             and not item.get("approval_id")
         }
         health_issue_keys = self._health_issues(health)
+        important_messages = self._important_messages(health)
+        priority_message_ids = set(important_messages)
 
         if not self.initialized:
             self.initialized = True
             self.approval_ids = approval_ids
             self.draft_ids = draft_ids
             self.health_issue_keys = health_issue_keys
+            self.priority_message_ids = priority_message_ids
             return []
 
         notifications: list[DesktopNotification] = []
         new_approvals = approval_ids - self.approval_ids
         new_drafts = draft_ids - self.draft_ids
         new_health_issues = health_issue_keys - self.health_issue_keys
+        new_priority_messages = priority_message_ids - self.priority_message_ids
 
+        if new_priority_messages:
+            notifications.append(
+                self._priority_notification(
+                    [important_messages[key] for key in sorted(new_priority_messages)]
+                )
+            )
         if new_approvals:
             count = len(new_approvals)
             notifications.append(
@@ -159,6 +222,7 @@ class NotificationTracker:
         self.approval_ids = approval_ids
         self.draft_ids = draft_ids
         self.health_issue_keys = health_issue_keys
+        self.priority_message_ids.update(priority_message_ids)
         return notifications
 
 
@@ -246,6 +310,27 @@ class DesktopGatewayClient:
             payload={"behavior": behavior},
         )
 
+    def _priority_messages(self) -> list[dict[str, Any]]:
+        try:
+            mailboxes = self.request("/v1/mailboxes").get("mailboxes", [])
+        except Exception:
+            return []
+        messages: list[dict[str, Any]] = []
+        for mailbox in list(mailboxes)[:10]:
+            mailbox_id = str(mailbox.get("mailbox_id") or "")
+            if not mailbox_id:
+                continue
+            try:
+                payload = self.request(
+                    f"/v1/mailboxes/{mailbox_id}/messages?limit=50"
+                )
+            except Exception:
+                continue
+            messages.extend(
+                item for item in payload.get("messages", []) if isinstance(item, dict)
+            )
+        return messages
+
     def snapshot(self) -> dict[str, Any]:
         settings = self.request("/v1/settings")
         brain = self.request("/v1/agent/brain")
@@ -253,7 +338,8 @@ class DesktopGatewayClient:
             "approvals", []
         )
         drafts = self.request("/v1/drafts?limit=100").get("drafts", [])
-        health = self.request("/v1/system/health")
+        health = dict(self.request("/v1/system/health"))
+        health["_desktop_priority_messages"] = self._priority_messages()
         status = summarize_desktop_status(
             settings=settings,
             brain=brain,
