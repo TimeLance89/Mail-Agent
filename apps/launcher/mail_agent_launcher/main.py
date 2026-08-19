@@ -27,7 +27,7 @@ from .desktop_runtime import (
 )
 
 APP_NAME = "MAIL-AGENT"
-APP_VERSION = "0.13.0"
+APP_VERSION = "0.13.7"
 GATEWAY_PORT = 8765
 REGISTRY_PORT = 8770
 GATEWAY_URL = f"http://127.0.0.1:{GATEWAY_PORT}"
@@ -78,7 +78,10 @@ def configure_environment(data_dir: Path) -> None:
     os.environ.setdefault("MAIL_AGENT_GATEWAY_PORT", str(GATEWAY_PORT))
     web_dir = bundle_web_dir()
     if web_dir:
-        os.environ.setdefault("MAIL_AGENT_WEB_DIR", str(web_dir))
+        # `_MEIPASS` changes on every one-file PyInstaller start. An updater child process can
+        # inherit MAIL_AGENT_WEB_DIR from the previous bundle, which points at an already removed
+        # temporary directory. The current frozen bundle is authoritative and must replace it.
+        os.environ["MAIL_AGENT_WEB_DIR"] = str(web_dir)
 
 
 def log_path(data_dir: Path) -> Path:

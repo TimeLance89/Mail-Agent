@@ -133,6 +133,40 @@ jobs:
           if ($process.ExitCode -ne 0) {
             throw "Mail-Agent.exe smoke test failed with exit code $($process.ExitCode)"
           }
+      - name: Smoke test bundled web UI after stale updater environment
+        shell: pwsh
+        run: |
+          $expectedVersion = (python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])").Trim()
+          $dataDir = Join-Path $env:RUNNER_TEMP "mail-agent-web-smoke"
+          Remove-Item $dataDir -Recurse -Force -ErrorAction SilentlyContinue
+          $env:MAIL_AGENT_WEB_DIR = Join-Path $env:RUNNER_TEMP "stale-old-meipass\mail_agent_web"
+          $process = Start-Process -FilePath "dist\Mail-Agent.exe" -ArgumentList @("--no-browser", "--data-dir", $dataDir) -PassThru
+          try {
+            $deadline = (Get-Date).AddSeconds(45)
+            $healthy = $false
+            do {
+              try {
+                $health = Invoke-RestMethod -Uri "http://127.0.0.1:8765/health" -TimeoutSec 1
+                if ($health.service -eq "mail-agent-gateway" -and $health.version -eq $expectedVersion) {
+                  $healthy = $true
+                  break
+                }
+              } catch {}
+              Start-Sleep -Milliseconds 500
+            } while ((Get-Date) -lt $deadline)
+            if (-not $healthy) {
+              throw "Frozen MAIL-AGENT gateway did not become healthy as $expectedVersion"
+            }
+            $root = Invoke-WebRequest -Uri "http://127.0.0.1:8765/" -TimeoutSec 5 -UseBasicParsing
+            if ($root.StatusCode -ne 200 -or $root.Content -notmatch "<title>MAIL-AGENT</title>") {
+              throw "Frozen MAIL-AGENT did not serve the bundled web UI at /"
+            }
+          } finally {
+            if ($process -and -not $process.HasExited) {
+              taskkill /PID $process.Id /T /F | Out-Null
+            }
+            Remove-Item Env:MAIL_AGENT_WEB_DIR -ErrorAction SilentlyContinue
+          }
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
       - name: Build Windows installer
@@ -344,12 +378,12 @@ jobs:
           google_client_id = defaults.get("GOOGLE_CLIENT_ID", "")
           microsoft_client_id = defaults.get("MICROSOFT_CLIENT_ID", "")
           if not google_client_id.endswith(".apps.googleusercontent.com"):
-              raise SystemExit("A valid Google OAuth desktop client ID is required for release builds")
+            raise SystemExit("A valid Google OAuth desktop client ID is required for release builds")
           print("Google OAuth desktop client configured.")
           if microsoft_client_id:
-              print("Microsoft OAuth public client configured.")
+            print("Microsoft OAuth public client configured.")
           else:
-              print("Microsoft OAuth public client not embedded; Microsoft UI stays unavailable.")
+            print("Microsoft OAuth public client not embedded; Microsoft UI stays unavailable.")
           PY
       - name: Run tests
         run: python -m pytest -q
