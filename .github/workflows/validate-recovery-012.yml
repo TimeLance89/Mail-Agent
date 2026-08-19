@@ -1,0 +1,49 @@
+name: Validate Reliability Recovery 0.12.0
+
+permissions:
+  contents: write
+
+on:
+  pull_request:
+    branches:
+      - main
+
+jobs:
+  validate:
+    if: github.event.pull_request.head.ref == 'feat/reliability-recovery-0.12.0'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: feat/reliability-recovery-0.12.0
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply deterministic reliability integration
+        run: |
+          if [ -f tools/apply_recovery_012.py ]; then
+            python tools/apply_recovery_012.py
+            rm tools/apply_recovery_012.py
+          else
+            echo "Reliability integration helper already removed; validating clean product head."
+          fi
+      - name: Install dependencies
+        run: python -m pip install -e ".[dev]"
+      - name: Validate product state
+        run: |
+          python -m pytest -q
+          python -m compileall -q apps packages connectors
+          node --check apps/web/app.js
+          git diff --check
+      - name: Persist tested integration
+        run: |
+          if git diff --quiet; then
+            echo "Nothing to persist"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+TimeLance89@users.noreply.github.com"
+          git add -A
+          git commit -m "feat: integrate reliability and recovery 0.12.0"
+          git push origin HEAD:feat/reliability-recovery-0.12.0
