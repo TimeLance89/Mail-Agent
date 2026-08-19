@@ -5,6 +5,9 @@ permissions:
 
 on:
   workflow_dispatch:
+  pull_request:
+    branches:
+      - main
   push:
     branches:
       - main
@@ -95,6 +98,13 @@ jobs:
               print("Microsoft OAuth public client not embedded; Microsoft UI stays unavailable.")
       - name: Run tests
         run: python -m pytest -q
+      - name: Validate source and frontend syntax
+        shell: pwsh
+        run: |
+          python -m compileall -q apps packages connectors tests
+          node --check apps/web/app.js
+          node --check apps/web/desktop-links.js
+          git diff --check
       - name: Build standalone app
         shell: pwsh
         run: >-
@@ -104,7 +114,14 @@ jobs:
           --paths connectors/imap --paths connectors/google --paths connectors/microsoft
           --add-data "apps/web:mail_agent_web"
           --hidden-import pystray._win32
-          apps/launcher/mail_agent_launcher/main.py
+          apps/launcher/mail_agent_launcher_entry.py
+      - name: Smoke test standalone app
+        shell: pwsh
+        run: |
+          $process = Start-Process -FilePath "dist\Mail-Agent.exe" -ArgumentList "--help" -Wait -PassThru
+          if ($process.ExitCode -ne 0) {
+            throw "Mail-Agent.exe smoke test failed with exit code $($process.ExitCode)"
+          }
       - name: Install Inno Setup
         run: choco install innosetup -y --no-progress
       - name: Build Windows installer
@@ -251,6 +268,12 @@ jobs:
           PY
       - name: Run tests
         run: python -m pytest -q
+      - name: Validate source and frontend syntax
+        run: |
+          python -m compileall -q apps packages connectors tests
+          node --check apps/web/app.js
+          node --check apps/web/desktop-links.js
+          git diff --check
       - name: Build standalone app
         run: >-
           pyinstaller --noconfirm --clean --onefile
@@ -258,7 +281,9 @@ jobs:
           --paths apps/launcher --paths apps/gateway --paths apps/registry --paths packages/agent_core
           --paths connectors/imap --paths connectors/google --paths connectors/microsoft
           --add-data "apps/web:mail_agent_web"
-          apps/launcher/mail_agent_launcher/main.py
+          apps/launcher/mail_agent_launcher_entry.py
+      - name: Smoke test standalone app
+        run: ./dist/Mail-Agent --help >/dev/null
       - name: Package Linux binary
         if: runner.os == 'Linux'
         run: tar -C dist -czf dist/Mail-Agent-Linux-x64.tar.gz Mail-Agent

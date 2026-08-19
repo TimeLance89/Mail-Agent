@@ -287,7 +287,7 @@ async def lifespan(_: FastAPI):
                 await task
 
 
-APP_VERSION = "0.12.0"
+APP_VERSION = "0.13.0"
 update_client = UpdateClient(
     feed_url=settings.update_feed_url,
     release_page=settings.update_release_page,
@@ -557,7 +557,6 @@ async def google_oauth_callback(
     )
 
 
-
 async def _finish_microsoft_oauth(
     *,
     state: str | None,
@@ -737,8 +736,6 @@ async def list_providers() -> dict:
         health_result = await provider.health()
         result[name] = {"available": health_result.available, "detail": health_result.detail}
     return result
-
-
 
 
 def _configuration_or_409() -> tuple[dict, dict]:
