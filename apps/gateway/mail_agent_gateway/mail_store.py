@@ -29,6 +29,7 @@ class StoredMessage:
     body_text: str
     seen: bool
     remote_id: str | None = None
+    remote_thread_id: str | None = None
     connector: str = "imap"
 
 
@@ -63,7 +64,13 @@ class MailStore:
                     seen INTEGER NOT NULL DEFAULT 0,
                     synced_at TEXT NOT NULL,
                     remote_id TEXT,
+                    remote_thread_id TEXT,
                     connector TEXT NOT NULL DEFAULT 'imap',
+                    agent_priority TEXT,
+                    agent_category TEXT,
+                    agent_summary TEXT,
+                    needs_reply INTEGER,
+                    analyzed_at TEXT,
                     PRIMARY KEY (mailbox_id, uid)
                 );
                 CREATE INDEX IF NOT EXISTS idx_messages_thread
@@ -90,7 +97,12 @@ class MailStore:
                     status TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     decided_at TEXT,
-                    decided_by TEXT
+                    decided_by TEXT,
+                    execution_status TEXT NOT NULL DEFAULT 'not_applicable',
+                    execution_started_at TEXT,
+                    executed_at TEXT,
+                    execution_result_json TEXT,
+                    execution_error TEXT
                 );
                 CREATE INDEX IF NOT EXISTS idx_approvals_status
                     ON approvals(status, created_at DESC);
@@ -128,8 +140,19 @@ class MailStore:
                 """
             )
             self._ensure_column(conn, "messages", "remote_id", "TEXT")
+            self._ensure_column(conn, "messages", "remote_thread_id", "TEXT")
             self._ensure_column(conn, "messages", "connector", "TEXT NOT NULL DEFAULT 'imap'")
+            self._ensure_column(conn, "messages", "agent_priority", "TEXT")
+            self._ensure_column(conn, "messages", "agent_category", "TEXT")
+            self._ensure_column(conn, "messages", "agent_summary", "TEXT")
+            self._ensure_column(conn, "messages", "needs_reply", "INTEGER")
+            self._ensure_column(conn, "messages", "analyzed_at", "TEXT")
             self._ensure_column(conn, "sync_state", "cursor", "TEXT")
+            self._ensure_column(conn, "approvals", "execution_status", "TEXT NOT NULL DEFAULT 'not_applicable'")
+            self._ensure_column(conn, "approvals", "execution_started_at", "TEXT")
+            self._ensure_column(conn, "approvals", "executed_at", "TEXT")
+            self._ensure_column(conn, "approvals", "execution_result_json", "TEXT")
+            self._ensure_column(conn, "approvals", "execution_error", "TEXT")
             conn.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS idx_messages_remote "
                 "ON messages(mailbox_id, remote_id) WHERE remote_id IS NOT NULL"
@@ -140,6 +163,15 @@ class MailStore:
         columns = {row[1] for row in conn.execute(f"PRAGMA table_info({table})").fetchall()}
         if column not in columns:
             conn.execute(f"ALTER TABLE {table} ADD COLUMN {column} {definition}")
+
+    @staticmethod
+    def _message_row(row: sqlite3.Row) -> dict[str, Any]:
+        item = dict(row)
+        item["recipients"] = json.loads(item.pop("recipients_json"))
+        item["seen"] = bool(item["seen"])
+        if item.get("needs_reply") is not None:
+            item["needs_reply"] = bool(item["needs_reply"])
+        return item
 
     def upsert_messages(self, messages: list[StoredMessage]) -> int:
         if not messages:
@@ -159,6 +191,7 @@ class MailStore:
                 1 if item.seen else 0,
                 now,
                 item.remote_id,
+                item.remote_thread_id,
                 item.connector,
             )
             for item in messages
@@ -168,8 +201,9 @@ class MailStore:
                 """
                 INSERT INTO messages (
                     mailbox_id, uid, internet_message_id, thread_key, sender,
-                    recipients_json, subject, sent_at, body_text, seen, synced_at, remote_id, connector
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    recipients_json, subject, sent_at, body_text, seen, synced_at,
+                    remote_id, remote_thread_id, connector
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(mailbox_id, uid) DO UPDATE SET
                     internet_message_id=excluded.internet_message_id,
                     thread_key=excluded.thread_key,
@@ -181,6 +215,7 @@ class MailStore:
                     seen=excluded.seen,
                     synced_at=excluded.synced_at,
                     remote_id=excluded.remote_id,
+                    remote_thread_id=excluded.remote_thread_id,
                     connector=excluded.connector
                 """,
                 rows,
@@ -193,18 +228,95 @@ class MailStore:
             rows = conn.execute(
                 """
                 SELECT mailbox_id, uid, internet_message_id, thread_key, sender,
-                       recipients_json, subject, sent_at, body_text, seen, synced_at, remote_id, connector
+                       recipients_json, subject, sent_at, body_text, seen, synced_at,
+                       remote_id, remote_thread_id, connector, agent_priority, agent_category,
+                       agent_summary, needs_reply, analyzed_at
                 FROM messages WHERE mailbox_id=? ORDER BY uid DESC LIMIT ?
                 """,
                 (mailbox_id, limit),
             ).fetchall()
-        result: list[dict[str, Any]] = []
-        for row in rows:
-            item = dict(row)
-            item["recipients"] = json.loads(item.pop("recipients_json"))
-            item["seen"] = bool(item["seen"])
-            result.append(item)
-        return result
+        return [self._message_row(row) for row in rows]
+
+    def get_message(self, mailbox_id: str, message_id: str) -> dict[str, Any] | None:
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                """
+                SELECT mailbox_id, uid, internet_message_id, thread_key, sender,
+                       recipients_json, subject, sent_at, body_text, seen, synced_at,
+                       remote_id, remote_thread_id, connector, agent_priority, agent_category,
+                       agent_summary, needs_reply, analyzed_at
+                FROM messages
+                WHERE mailbox_id=? AND (
+                    remote_id=? OR internet_message_id=? OR CAST(uid AS TEXT)=?
+                )
+                LIMIT 1
+                """,
+                (mailbox_id, message_id, message_id, message_id),
+            ).fetchone()
+        return self._message_row(row) if row else None
+
+    def list_thread_messages(
+        self,
+        mailbox_id: str,
+        thread_key: str,
+        *,
+        limit: int = 8,
+        exclude_message_id: str | None = None,
+    ) -> list[dict[str, Any]]:
+        limit = max(1, min(limit, 30))
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT mailbox_id, uid, internet_message_id, thread_key, sender,
+                       recipients_json, subject, sent_at, body_text, seen, synced_at,
+                       remote_id, remote_thread_id, connector, agent_priority, agent_category,
+                       agent_summary, needs_reply, analyzed_at
+                FROM messages
+                WHERE mailbox_id=? AND thread_key=?
+                ORDER BY uid DESC LIMIT ?
+                """,
+                (mailbox_id, thread_key, limit + 1),
+            ).fetchall()
+        items = [self._message_row(row) for row in reversed(rows)]
+        if exclude_message_id is not None:
+            items = [
+                item for item in items
+                if str(item.get("remote_id") or item.get("internet_message_id") or item.get("uid")) != exclude_message_id
+            ]
+        return items[-limit:]
+
+    def update_message_intelligence(
+        self,
+        mailbox_id: str,
+        message_id: str,
+        *,
+        priority: str,
+        category: str,
+        summary: str,
+        needs_reply: bool,
+    ) -> bool:
+        with self._lock, self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE messages
+                SET agent_priority=?, agent_category=?, agent_summary=?, needs_reply=?, analyzed_at=?
+                WHERE mailbox_id=? AND (
+                    remote_id=? OR internet_message_id=? OR CAST(uid AS TEXT)=?
+                )
+                """,
+                (
+                    priority,
+                    category,
+                    summary,
+                    1 if needs_reply else 0,
+                    utc_now(),
+                    mailbox_id,
+                    message_id,
+                    message_id,
+                    message_id,
+                ),
+            )
+            return cursor.rowcount > 0
 
     def get_last_uid(self, mailbox_id: str) -> int:
         with self._lock, self._connect() as conn:
@@ -327,8 +439,8 @@ class MailStore:
                 """
                 INSERT INTO approvals (
                     approval_id, mailbox_id, message_id, thread_id, action,
-                    proposal_json, policy_json, status, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+                    proposal_json, policy_json, status, created_at, execution_status
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?, 'not_applicable')
                 """,
                 (
                     approval_id,
@@ -341,13 +453,7 @@ class MailStore:
                     created_at,
                 ),
             )
-        return {
-            "approval_id": approval_id,
-            "status": "pending",
-            "created_at": created_at,
-            "proposal": json.loads(proposal_json),
-            "policy": json.loads(policy_json),
-        }
+        return self.get_approval(approval_id)
 
     def create_draft(
         self,
@@ -415,12 +521,20 @@ class MailStore:
         limit = max(1, min(limit, 500))
         with self._lock, self._connect() as conn:
             rows = conn.execute(
-                """
-                SELECT * FROM approvals WHERE status=? ORDER BY created_at DESC LIMIT ?
-                """,
+                "SELECT * FROM approvals WHERE status=? ORDER BY created_at DESC LIMIT ?",
                 (status, limit),
             ).fetchall()
         return [self._approval_row(row) for row in rows]
+
+    def get_approval(self, approval_id: str) -> dict[str, Any]:
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT * FROM approvals WHERE approval_id=?",
+                (approval_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(approval_id)
+        return self._approval_row(row)
 
     def decide_approval(self, approval_id: str, *, decision: str, actor: str) -> dict[str, Any]:
         if decision not in {"approved", "rejected"}:
@@ -435,12 +549,18 @@ class MailStore:
             if row["status"] != "pending":
                 raise RuntimeError("Approval has already been decided")
             decided_at = utc_now()
+            execution_status = (
+                "ready"
+                if decision == "approved" and row["action"] in {"send_reply", "forward"}
+                else "not_applicable"
+            )
             conn.execute(
                 """
-                UPDATE approvals SET status=?, decided_at=?, decided_by=?
+                UPDATE approvals
+                SET status=?, decided_at=?, decided_by=?, execution_status=?
                 WHERE approval_id=? AND status='pending'
                 """,
-                (decision, decided_at, actor, approval_id),
+                (decision, decided_at, actor, execution_status, approval_id),
             )
             updated = conn.execute(
                 "SELECT * FROM approvals WHERE approval_id=?",
@@ -448,9 +568,72 @@ class MailStore:
             ).fetchone()
         return self._approval_row(updated)
 
+    def claim_approval_execution(self, approval_id: str) -> dict[str, Any]:
+        with self._lock, self._connect() as conn:
+            row = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+            if row is None:
+                raise KeyError(approval_id)
+            if row["status"] != "approved":
+                raise RuntimeError("Approval must be approved before execution")
+            if row["execution_status"] == "sent":
+                return self._approval_row(row)
+            if row["execution_status"] == "executing":
+                raise RuntimeError("Approval execution is already in progress")
+            if row["execution_status"] not in {"ready", "failed"}:
+                raise RuntimeError("Approval does not represent an executable send action")
+            started_at = utc_now()
+            cursor = conn.execute(
+                """
+                UPDATE approvals
+                SET execution_status='executing', execution_started_at=?, execution_error=NULL
+                WHERE approval_id=? AND execution_status IN ('ready', 'failed')
+                """,
+                (started_at, approval_id),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Approval execution could not be claimed")
+            updated = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+        return self._approval_row(updated)
+
+    def complete_approval_execution(self, approval_id: str, result: dict[str, Any]) -> dict[str, Any]:
+        with self._lock, self._connect() as conn:
+            cursor = conn.execute(
+                """
+                UPDATE approvals
+                SET execution_status='sent', executed_at=?, execution_result_json=?, execution_error=NULL
+                WHERE approval_id=? AND execution_status='executing'
+                """,
+                (utc_now(), json.dumps(result, ensure_ascii=False), approval_id),
+            )
+            if cursor.rowcount != 1:
+                raise RuntimeError("Approval execution was not in progress")
+            conn.execute(
+                "UPDATE drafts SET status='sent' WHERE approval_id=?",
+                (approval_id,),
+            )
+            row = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+        return self._approval_row(row)
+
+    def fail_approval_execution(self, approval_id: str, error: str) -> dict[str, Any]:
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                UPDATE approvals
+                SET execution_status='failed', execution_error=?
+                WHERE approval_id=? AND execution_status='executing'
+                """,
+                (error[:2000], approval_id),
+            )
+            row = conn.execute("SELECT * FROM approvals WHERE approval_id=?", (approval_id,)).fetchone()
+        if row is None:
+            raise KeyError(approval_id)
+        return self._approval_row(row)
+
     @staticmethod
     def _approval_row(row: sqlite3.Row) -> dict[str, Any]:
         data = dict(row)
         data["proposal"] = json.loads(data.pop("proposal_json"))
         data["policy"] = json.loads(data.pop("policy_json"))
+        result_json = data.pop("execution_result_json", None)
+        data["execution_result"] = json.loads(result_json) if result_json else None
         return data
