@@ -23,7 +23,7 @@ if not exist "%APP_EXE%" goto fail_missing
 rem Never trust a stale pre-update process. The installer has already replaced the files;
 rem make sure the process serving the gateway is the newly installed executable.
 taskkill /F /T /IM "Mail-Agent.exe" >nul 2>&1
-timeout /t 1 /nobreak >nul
+call :sleep_ms 1000
 
 call :start_agent
 call :wait_health
@@ -31,7 +31,7 @@ if not errorlevel 1 goto success
 
 call :log "First restart did not expose the expected gateway. Retrying once."
 taskkill /F /T /IM "Mail-Agent.exe" >nul 2>&1
-timeout /t 2 /nobreak >nul
+call :sleep_ms 1500
 call :start_agent
 call :wait_health
 if not errorlevel 1 goto success
@@ -49,12 +49,12 @@ if errorlevel 1 exit /b 1
 exit /b 0
 
 :wait_health
-for /L %%I in (1,1,45) do (
-  powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference='Stop'; try { $r=Invoke-RestMethod -Uri $env:MAIL_AGENT_HEALTH_URL -TimeoutSec 1; if (($r.service -eq 'mail-agent-gateway') -and ([string]::IsNullOrWhiteSpace($env:MAIL_AGENT_EXPECTED_VERSION) -or ($r.version -eq $env:MAIL_AGENT_EXPECTED_VERSION))) { exit 0 } } catch {}; exit 1" >nul 2>&1
-  if not errorlevel 1 exit /b 0
-  timeout /t 1 /nobreak >nul
-)
-exit /b 1
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "$ErrorActionPreference='SilentlyContinue'; $deadline=[DateTime]::UtcNow.AddSeconds(45); do { try { $r=Invoke-RestMethod -Uri $env:MAIL_AGENT_HEALTH_URL -TimeoutSec 1; if (($r.service -eq 'mail-agent-gateway') -and ([string]::IsNullOrWhiteSpace($env:MAIL_AGENT_EXPECTED_VERSION) -or ($r.version -eq $env:MAIL_AGENT_EXPECTED_VERSION))) { exit 0 } } catch {}; Start-Sleep -Milliseconds 750 } while ([DateTime]::UtcNow -lt $deadline); exit 1" >nul 2>&1
+exit /b %errorlevel%
+
+:sleep_ms
+powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command "Start-Sleep -Milliseconds %~1" >nul 2>&1
+exit /b 0
 
 :success
 call :log "Gateway is reachable with expected version %EXPECTED_VERSION%."
