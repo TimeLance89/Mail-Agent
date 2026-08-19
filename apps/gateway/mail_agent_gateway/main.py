@@ -23,6 +23,7 @@ from mail_agent_core.providers import CodexCliProvider, OllamaProvider
 from mail_agent_core.update import UpdateClient
 from mail_agent_imap import ImapMailbox, MailboxConfig, SmtpSender
 
+from .action_executor import MailActionExecutor
 from .agent_runtime import AgentRuntime
 from .audit import AuditLog
 from .cloud_sync import GoogleGmailSyncService
@@ -127,6 +128,17 @@ def _runtime_mailbox(mailbox_id: str) -> MailboxRuntimeConfig:
     )
 
 
+action_executor = MailActionExecutor(
+    mail_store=mail_store,
+    identity_manager=identity_manager,
+    vault=vault,
+    mailbox_lookup=_mailbox_by_id,
+    google_client_id=settings.google_client_id,
+    google_client_secret=settings.google_client_secret,
+    audit_log=audit_log,
+)
+
+
 async def _sync_mailbox(mailbox: dict, *, limit: int = 100) -> dict:
     mailbox_id = mailbox["mailbox_id"]
     try:
@@ -209,7 +221,7 @@ async def lifespan(_: FastAPI):
                 await task
 
 
-APP_VERSION = "0.4.0"
+APP_VERSION = "0.5.0"
 update_client = UpdateClient(
     feed_url=settings.update_feed_url,
     release_page=settings.update_release_page,
@@ -605,6 +617,7 @@ async def _settings_payload() -> dict:
             "agent_signature_required": True,
             "agent_signature_removable": False,
             "send_requires_approval": True,
+            "approved_send_executes_immediately": True,
         },
     }
 
@@ -705,10 +718,14 @@ async def list_drafts(mailbox_id: str | None = None, limit: int = 100) -> dict:
 
 @app.get("/v1/approvals")
 async def list_approvals(status: str = "pending", limit: int = 100) -> dict:
+    if status == "attention":
+        pending = mail_store.list_approvals("pending", limit)
+        failed = [item for item in mail_store.list_approvals("approved", limit) if item.get("execution_status") == "failed"]
+        combined = sorted(pending + failed, key=lambda item: item.get("created_at") or "", reverse=True)
+        return {"approvals": combined[:limit]}
     if status not in {"pending", "approved", "rejected"}:
         raise HTTPException(status_code=400, detail="Unsupported approval status")
     return {"approvals": mail_store.list_approvals(status, limit)}
-
 
 @app.post("/v1/approvals/{approval_id}/approve")
 async def approve_action(approval_id: str, body: ApprovalDecisionRequest) -> dict:
@@ -718,13 +735,23 @@ async def approve_action(approval_id: str, body: ApprovalDecisionRequest) -> dic
         raise HTTPException(status_code=404, detail="Approval not found") from exc
     except RuntimeError as exc:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
-    audit_log.append(
-        "approval_approved",
-        actor=body.actor,
-        details={"approval_id": approval_id, "action": approval["action"]},
-    )
+    audit_log.append("approval_approved", actor=body.actor, details={"approval_id": approval_id, "action": approval["action"]})
+    if approval.get("execution_status") == "ready":
+        try:
+            approval = await action_executor.execute_approval(approval_id)
+        except RuntimeError as exc:
+            raise HTTPException(status_code=502, detail=str(exc)) from exc
     return approval
 
+
+@app.post("/v1/approvals/{approval_id}/execute")
+async def execute_approved_action(approval_id: str) -> dict:
+    try:
+        return await action_executor.execute_approval(approval_id)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Approval not found") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
 
 @app.post("/v1/approvals/{approval_id}/reject")
 async def reject_action(approval_id: str, body: ApprovalDecisionRequest) -> dict:
