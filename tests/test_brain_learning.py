@@ -38,6 +38,23 @@ def _shortening_bodies():
     return before, after
 
 
+def test_two_owner_edits_are_not_enough_to_create_learning_candidate(tmp_path):
+    _manager, _identity, _profile, brain = _identity_profile_brain(tmp_path)
+    before, after = _shortening_bodies()
+    for index in range(2):
+        brain.record_owner_edit(
+            draft_id=f"dr-{index}",
+            mailbox_id="mb",
+            message_id=f"msg-{index}",
+            sender="person@example.test",
+            before_subject="Re: Frage",
+            before_body=before,
+            after_subject="Re: Frage",
+            after_body=after,
+        )
+    assert brain.learning_candidates() == []
+
+
 def test_repeated_owner_edits_create_candidate_but_do_not_learn_automatically(tmp_path):
     _manager, _identity, _profile, brain = _identity_profile_brain(tmp_path)
     before, after = _shortening_bodies()
