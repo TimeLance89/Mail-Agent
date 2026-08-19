@@ -46,7 +46,12 @@ class GoogleGmailSyncService:
             )
             stored.append(
                 StoredMessage(
-                    **{**parsed.__dict__, "remote_id": message_id, "connector": "gmail_api"}
+                    **{
+                        **parsed.__dict__,
+                        "remote_id": message_id,
+                        "remote_thread_id": payload.get("threadId"),
+                        "connector": "gmail_api",
+                    }
                 )
             )
             newest_history = newest_history or payload.get("historyId")
@@ -102,7 +107,16 @@ class GoogleGmailSyncService:
                 payload["raw_bytes"],
                 seen="UNREAD" not in payload.get("labelIds", []),
             )
-            stored.append(StoredMessage(**{**parsed.__dict__, "remote_id": remote_id, "connector": "gmail_api"}))
+            stored.append(
+                StoredMessage(
+                    **{
+                        **parsed.__dict__,
+                        "remote_id": remote_id,
+                        "remote_thread_id": payload.get("threadId"),
+                        "connector": "gmail_api",
+                    }
+                )
+            )
         self.store.upsert_messages(stored)
         for remote_id in deleted_ids:
             self.store.delete_remote_message(mailbox_id, remote_id)
@@ -191,6 +205,7 @@ def _graph_message(mailbox_id: str, item: dict) -> StoredMessage:
         body_text=body.strip(),
         seen=bool(item.get("isRead", False)),
         remote_id=remote_id,
+        remote_thread_id=conversation_id,
         connector="microsoft_graph",
     )
 
