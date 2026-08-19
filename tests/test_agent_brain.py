@@ -66,25 +66,25 @@ def test_brain_creates_soul_memory_and_structured_contact_memory(tmp_path: Path)
     assert brain.public_status()["journal_events"] == 1
 
 
+def _message(uid: int) -> StoredMessage:
+    return StoredMessage(
+        mailbox_id="mb",
+        uid=uid,
+        internet_message_id=f"<msg-{uid}@example>",
+        thread_key=f"thread-{uid}",
+        sender="sender@example.com",
+        recipients=["owner@example.com"],
+        subject=f"Mail {uid}",
+        sent_at=None,
+        body_text="Body",
+        seen=False,
+        remote_id=f"remote-{uid}",
+    )
+
+
 def test_work_queue_reaches_older_unprocessed_mail(tmp_path: Path):
     store = MailStore(tmp_path / "mail.db")
-    messages = [
-        StoredMessage(
-            mailbox_id="mb",
-            uid=uid,
-            internet_message_id=f"<msg-{uid}@example>",
-            thread_key=f"thread-{uid}",
-            sender="sender@example.com",
-            recipients=["owner@example.com"],
-            subject=f"Mail {uid}",
-            sent_at=None,
-            body_text="Body",
-            seen=False,
-            remote_id=f"remote-{uid}",
-        )
-        for uid in range(1, 31)
-    ]
-    store.upsert_messages(messages)
+    store.upsert_messages([_message(uid) for uid in range(1, 31)])
 
     # Simulate the old runtime having processed the newest 20 messages.
     for uid in range(11, 31):
@@ -95,3 +95,14 @@ def test_work_queue_reaches_older_unprocessed_mail(tmp_path: Path):
 
     assert queue.pending_count("mb") == 10
     assert [item["uid"] for item in pending] == [10, 9, 8, 7, 6]
+
+
+def test_work_queue_prioritizes_never_attempted_mail_over_retry_errors(tmp_path: Path):
+    store = MailStore(tmp_path / "mail.db")
+    store.upsert_messages([_message(1), _message(2), _message(3)])
+    store.record_agent_processing("mb", "remote-3", status="error", error="temporary provider outage")
+
+    queue = AgentWorkQueue(store)
+    pending = queue.list_pending("mb", 3)
+
+    assert [item["uid"] for item in pending] == [2, 1, 3]
