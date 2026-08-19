@@ -112,7 +112,7 @@ for path, old, new in [
     ("pyproject.toml", 'version = "0.4.0"', 'version = "0.5.0"'),
     ("apps/launcher/mail_agent_launcher/main.py", 'APP_VERSION = "0.4.0"', 'APP_VERSION = "0.5.0"'),
     ("packaging/windows/MailAgent.iss", '#define MyAppVersion "0.4.0"', '#define MyAppVersion "0.5.0"'),
-    ("packages/agent_core/mail_agent_core/identity.py", 'app_version: str = "0.2.1"', 'app_version: str = "0.5.0"'),
+    ("packages/agent_core/mail_agent_core/identity.py", 'app_version: str = "0.4.0"', 'app_version: str = "0.5.0"'),
     ("tests/test_update_api.py", 'assert result["current_version"] == "0.4.0"', 'assert result["current_version"] == "0.5.0"'),
 ]:
     replace_once(path, old, new)
