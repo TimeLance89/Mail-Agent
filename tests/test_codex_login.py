@@ -3,7 +3,11 @@ from unittest.mock import AsyncMock, Mock
 
 import pytest
 
-from mail_agent_core.providers import CodexCliProvider, _hidden_process_creationflags
+from mail_agent_core.providers import (
+    CodexCliProvider,
+    CompletionRequest,
+    _hidden_process_creationflags,
+)
 
 
 def test_codex_chatgpt_login_uses_official_cli(monkeypatch):
@@ -48,4 +52,22 @@ async def test_codex_health_passes_hidden_creationflags(monkeypatch):
     result = await CodexCliProvider("codex").health()
 
     assert result.available is True
+    assert create.call_args.kwargs["creationflags"] == 0x08000000
+
+
+@pytest.mark.asyncio
+async def test_codex_completion_passes_hidden_creationflags(monkeypatch):
+    monkeypatch.setattr("mail_agent_core.providers.shutil.which", lambda _: "/fake/codex")
+    monkeypatch.setattr("mail_agent_core.providers._hidden_process_creationflags", lambda: 0x08000000)
+
+    proc = Mock(returncode=0)
+    proc.communicate = AsyncMock(return_value=(b'{"ok":true}', b""))
+    create = AsyncMock(return_value=proc)
+    monkeypatch.setattr("mail_agent_core.providers.asyncio.create_subprocess_exec", create)
+
+    result = await CodexCliProvider("codex").complete(
+        CompletionRequest(system="system", user="user", model="default")
+    )
+
+    assert result == '{"ok":true}'
     assert create.call_args.kwargs["creationflags"] == 0x08000000
