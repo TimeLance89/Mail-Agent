@@ -6,7 +6,7 @@ from collections.abc import Callable
 from pydantic import BaseModel, Field
 
 from .identity import AgentIdentity
-from .models import AgentProfile, MailActionProposal, PolicyDecision
+from .models import AgentProfile, MailActionProposal, MailActionType, PolicyDecision
 from .policy import PolicyEngine
 from .providers import CompletionRequest, LLMProvider
 from .signature import stamp_outgoing_proposal
@@ -75,10 +75,14 @@ class MailAgent:
         )
         proposal = self._parse_proposal(result)
 
-        # Scope and identity fields are authoritative gateway data, never model-controlled.
+        # Scope and reply-recipient fields are authoritative gateway data, never model-controlled.
         proposal.mailbox_id = message.mailbox_id
         proposal.message_id = message.message_id
         proposal.thread_id = message.thread_id
+        if proposal.action == MailActionType.SEND_REPLY:
+            proposal.recipient = message.sender
+            if not proposal.subject:
+                proposal.subject = message.subject if message.subject.lower().startswith("re:") else f"Re: {message.subject}"
         proposal = stamp_outgoing_proposal(
             proposal,
             identity,
