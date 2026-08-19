@@ -232,7 +232,7 @@ async def lifespan(_: FastAPI):
                 await task
 
 
-APP_VERSION = "0.6.1"
+APP_VERSION = "0.7.0"
 update_client = UpdateClient(
     feed_url=settings.update_feed_url,
     release_page=settings.update_release_page,
