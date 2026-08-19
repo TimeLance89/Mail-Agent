@@ -28,12 +28,7 @@ class ProviderHealth:
 
 
 def _hidden_process_creationflags(platform_name: str | None = None) -> int:
-    """Return flags that keep internal CLI helpers invisible on Windows.
-
-    MAIL-AGENT is a GUI application. Provider health checks and model executions may use npm
-    `.cmd` wrappers, which route through cmd.exe on Windows. Without CREATE_NO_WINDOW each call can
-    flash a console window even though the parent executable itself is windowless.
-    """
+    """Return flags that keep internal CLI helpers invisible on Windows."""
 
     platform_name = platform_name or os.name
     if platform_name != "nt":
@@ -42,13 +37,7 @@ def _hidden_process_creationflags(platform_name: str | None = None) -> int:
 
 
 async def _terminate_process_tree(proc: Any) -> None:
-    """Best-effort bounded termination for provider subprocesses.
-
-    On Windows Codex may be launched through a `.cmd` wrapper. Killing only cmd.exe can leave the
-    actual Codex child alive with inherited stdout/stderr pipe handles. Waiting on communicate()
-    after that can therefore block forever. taskkill /T terminates the whole process tree and the
-    final wait is itself bounded, so provider discovery can never keep MAIL-AGENT startup hostage.
-    """
+    """Best-effort bounded termination for provider subprocesses."""
 
     if getattr(proc, "returncode", None) is not None:
         return
@@ -81,8 +70,6 @@ async def _terminate_process_tree(proc: Any) -> None:
     try:
         await asyncio.wait_for(proc.wait(), timeout=2.0)
     except Exception:
-        # Never turn cleanup into another unbounded wait. The OS will reap any remaining process
-        # when its handles close; taskkill /T already handles the important Windows child-tree case.
         pass
 
 
@@ -242,13 +229,7 @@ class CodexCliProvider(LLMProvider):
             return []
 
     async def list_models(self) -> list[str]:
-        """Discover models from the user's installed official Codex client.
-
-        `codex debug models` refreshes/reads the effective Codex model catalog. If that is not
-        supported by an older client or temporarily fails, the bundled catalog is used as a local
-        fallback. The UI keeps `default` as a separate provider-managed choice, so this method only
-        returns real model ids discovered from Codex.
-        """
+        """Discover models from the user's installed official Codex client."""
 
         try:
             models = await self._debug_model_catalog(bundled=False, timeout=8.0)
@@ -277,20 +258,36 @@ class CodexCliProvider(LLMProvider):
                 "Do not execute mailbox, filesystem, network, or shell actions.",
             ],
         }
-        prompt = json.dumps(envelope, ensure_ascii=False)
+        prompt = json.dumps(envelope, ensure_ascii=False).encode("utf-8")
         args = ["exec", "--skip-git-repo-check"]
         if request.model and request.model != "default":
             args.extend(["-m", request.model])
-        args.append(prompt)
+
+        # Codex officially supports `codex exec -` with the prompt on stdin. Keeping the full mail,
+        # thread and brain context out of argv avoids Windows' command-line length limit (WinError
+        # 206) and also prevents prompt contents from being exposed in process command-line tools.
+        args.append("-")
         command = self._command(*args)
 
-        proc = await asyncio.create_subprocess_exec(
-            *command,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE,
-            creationflags=_hidden_process_creationflags(),
-        )
-        stdout, stderr = await proc.communicate()
+        proc: Any | None = None
+        try:
+            proc = await asyncio.create_subprocess_exec(
+                *command,
+                stdin=asyncio.subprocess.PIPE,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE,
+                creationflags=_hidden_process_creationflags(),
+            )
+            stdout, stderr = await asyncio.wait_for(proc.communicate(input=prompt), timeout=180.0)
+        except TimeoutError as exc:
+            if proc is not None:
+                await _terminate_process_tree(proc)
+            raise RuntimeError("Codex execution timed out") from exc
+        except Exception:
+            if proc is not None:
+                await _terminate_process_tree(proc)
+            raise
+
         if proc.returncode != 0:
             raise RuntimeError(stderr.decode(errors="replace").strip() or "Codex execution failed")
         return stdout.decode(errors="replace").strip()
