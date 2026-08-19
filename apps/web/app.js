@@ -17,6 +17,8 @@ let brainLoading = false;
 let shadowStatus = null;
 let shadowLoading = false;
 let ruleSimulation = null;
+let systemHealth = null;
+let systemHealthLoading = false;
 let settingsProbe = null;
 let editingDraftId = null;
 let mailboxConnector = null;
@@ -75,7 +77,7 @@ function stepper() {
   return `<div class="setup-stepper">${onboardingSteps.map((label, i) => `<div class="setup-dot ${i < step ? 'done' : ''} ${i === step ? 'active' : ''}"><span>${i < step ? icon('check',13) : i+1}</span><small>${label}</small></div>`).join('')}</div>`;
 }
 function setupLayout(content) {
-  return `<main class="setup-page"><section class="setup-aside">${brand()}<div class="setup-aside-copy"><span class="kicker">SETUP IN WENIGEN MINUTEN</span><h1>Dein Postfach.<br><em>Dein Agent.</em></h1><p>MAIL-AGENT arbeitet lokal, kontrolliert und ausschließlich für E-Mail.</p></div><div class="trust-pill">${icon('shield',18)}<span><b>Local-first</b><small>Schlüssel und Mail-Zugang bleiben bei dir.</small></span></div></section><section class="setup-main"><div class="setup-top"><span>Schritt ${step+1} von ${onboardingSteps.length}</span><b>${onboardingSteps[step]}</b></div>${stepper()}<div class="setup-card">${content}</div><div class="setup-foot">MAIL-AGENT v0.11.0 · Lokales Gateway</div></section></main>`;
+  return `<main class="setup-page"><section class="setup-aside">${brand()}<div class="setup-aside-copy"><span class="kicker">SETUP IN WENIGEN MINUTEN</span><h1>Dein Postfach.<br><em>Dein Agent.</em></h1><p>MAIL-AGENT arbeitet lokal, kontrolliert und ausschließlich für E-Mail.</p></div><div class="trust-pill">${icon('shield',18)}<span><b>Local-first</b><small>Schlüssel und Mail-Zugang bleiben bei dir.</small></span></div></section><section class="setup-main"><div class="setup-top"><span>Schritt ${step+1} von ${onboardingSteps.length}</span><b>${onboardingSteps[step]}</b></div>${stepper()}<div class="setup-card">${content}</div><div class="setup-foot">MAIL-AGENT v0.12.0 · Lokales Gateway</div></section></main>`;
 }
 function field(label, id, value='', type='text', placeholder='') {
   return `<label class="field"><span>${label}</span><input id="${id}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}"></label>`;
@@ -136,7 +138,7 @@ async function probeMailbox(){saveVisible();busy=true;render();try{const r=await
 
 async function connectGoogle(){
   saveVisible();
-  const configured=document.getElementById('google-connect')?.dataset.configured==='1';
+  const configured=document.getElementById('google-connect')?.dataset.configured==='1'||!!oauthProviders.google?.configured;
   if(!configured){showNotice('Google OAuth ist für diesen Build noch nicht freigeschaltet. Der Projekt-Client muss einmalig konfiguriert werden.','error');return;}
   const popup=window.open('about:blank','mail-agent-google','popup=yes,width=560,height=760');
   if(!popup){showNotice('Der Browser hat das Google-Anmeldefenster blockiert. Pop-ups für MAIL-AGENT erlauben.','error');return;}
@@ -159,7 +161,7 @@ async function connectGoogle(){
 
 async function connectMicrosoft(){
   saveVisible();
-  const configured=document.getElementById('microsoft-connect')?.dataset.configured==='1';
+  const configured=document.getElementById('microsoft-connect')?.dataset.configured==='1'||!!oauthProviders.microsoft?.configured;
   if(!configured){showNotice('Microsoft OAuth ist für diesen Build noch nicht freigeschaltet. Der Projekt-Client muss einmalig konfiguriert werden.','error');return;}
   const popup=window.open('about:blank','mail-agent-microsoft','popup=yes,width=560,height=760');
   if(!popup){showNotice('Der Browser hat das Microsoft-Anmeldefenster blockiert. Pop-ups für MAIL-AGENT erlauben.','error');return;}
@@ -197,9 +199,9 @@ async function finishOnboarding(){saveVisible();busy=true;render();try{await pos
 function navItem(view,label,ico,badge='') { return `<button class="nav-item ${activeView===view?'active':''}" data-view="${view}">${icon(ico,19)}<span>${label}</span>${badge?`<b>${badge}</b>`:''}</button>`; }
 function dashboardLayout(content) {
   const agentName=form.agentName||identity?.agent_name||'MAIL-AGENT';
-  return `<main class="dashboard"><aside class="sidebar">${brand(true)}<nav>${navItem('overview','Übersicht','home')}${navItem('activity','Aktivität','spark',brainStatus?.pending_total||'')}${navItem('shadow','Testmodus','shield',runtimeSettings?.behavior?.execution_mode==='shadow'?'SHADOW':'')}${navItem('inbox','Inbox','inbox',dashboard.messages.length||'')}${navItem('approvals','Freigaben','shield',dashboard.approvals.length||'')}${navItem('drafts','Entwürfe','draft',dashboard.drafts.length||'')}${navItem('settings','Einstellungen','settings')}</nav><div class="sidebar-bottom"><div class="agent-mini"><span class="avatar">${esc(agentName.slice(0,1).toUpperCase())}</span><span><b>${esc(agentName)}</b><small><i></i> Aktiv</small></span></div></div></aside><section class="workspace"><header class="topbar"><div><span class="workspace-kicker">MAIL-AGENT</span><h1>${viewTitle()}</h1></div><div class="top-actions"><button class="btn secondary compact" id="sync-now">${icon('sync',16)}Synchronisieren</button><span class="status-pill"><i></i> Gateway online</span></div></header><div class="workspace-body">${content}</div></section></main>`;
+  return `<main class="dashboard"><aside class="sidebar">${brand(true)}<nav>${navItem('overview','Übersicht','home')}${navItem('activity','Aktivität','spark',brainStatus?.pending_total||'')}${navItem('shadow','Testmodus','shield',runtimeSettings?.behavior?.execution_mode==='shadow'?'SHADOW':'')}${navItem('system','System','settings',systemHealth?.summary?.error||systemHealth?.summary?.warning||'')}${navItem('inbox','Inbox','inbox',dashboard.messages.length||'')}${navItem('approvals','Freigaben','shield',dashboard.approvals.length||'')}${navItem('drafts','Entwürfe','draft',dashboard.drafts.length||'')}${navItem('settings','Einstellungen','settings')}</nav><div class="sidebar-bottom"><div class="agent-mini"><span class="avatar">${esc(agentName.slice(0,1).toUpperCase())}</span><span><b>${esc(agentName)}</b><small><i></i> Aktiv</small></span></div></div></aside><section class="workspace"><header class="topbar"><div><span class="workspace-kicker">MAIL-AGENT</span><h1>${viewTitle()}</h1></div><div class="top-actions"><button class="btn secondary compact" id="sync-now">${icon('sync',16)}Synchronisieren</button><span class="status-pill"><i></i> Gateway online</span></div></header><div class="workspace-body">${content}</div></section></main>`;
 }
-function viewTitle(){return ({overview:'Übersicht',activity:'Agent Activity',shadow:'Shadow Test',inbox:'Inbox',approvals:'Freigaben',drafts:'Entwürfe',settings:'Einstellungen'})[activeView]||'Übersicht';}
+function viewTitle(){return ({overview:'Übersicht',activity:'Agent Activity',shadow:'Shadow Test',system:'Systemzustand',inbox:'Inbox',approvals:'Freigaben',drafts:'Entwürfe',settings:'Einstellungen'})[activeView]||'Übersicht';}
 function metric(label,value,sub,ico){return `<div class="stat-card"><div class="stat-top"><span>${label}</span><span class="stat-icon">${icon(ico,18)}</span></div><strong>${esc(value)}</strong><small>${esc(sub)}</small></div>`;}
 
 function emptyState(ico, title, text) { return `<div class="empty-state large">${icon(ico,30)}<b>${esc(title)}</b><span>${esc(text)}</span></div>`; }
@@ -209,6 +211,7 @@ function renderDashboard(){
   if(activeView==='overview') content=`<section class="hero-card"><div><span class="hero-kicker">DEIN AGENT IST BEREIT</span><h2>${esc(form.agentName||'MAIL-AGENT')} hält dein Postfach im Blick.</h2><p>Neue Nachrichten werden lokal synchronisiert, analysiert und nur innerhalb deiner Regeln bearbeitet.</p><div class="hero-actions"><button class="btn primary" data-view="inbox">Inbox öffnen${icon('chevron',16)}</button><button class="btn secondary" data-view="approvals">Freigaben prüfen</button></div></div><div class="hero-orb">${icon('spark',38)}</div></section><div class="stats-grid">${metric('Postfach',mailbox?.email_address||'Nicht verbunden',mailbox?.credential_available?'Vault geschützt':'Credential fehlt','mail')}${metric('Inbox',dashboard.messages.length,'lokal geladene Nachrichten','inbox')}${metric('Freigaben',dashboard.approvals.length,'warten auf deine Entscheidung','shield')}${metric('Entwürfe',dashboard.drafts.length,'vom Agenten vorbereitet','draft')}</div><section class="panel"><div class="panel-head"><div><span>LETZTE NACHRICHTEN</span><h3>Inbox</h3></div><button class="link-btn" data-view="inbox">Alle anzeigen →</button></div>${dashboard.messages.length?dashboard.messages.slice(0,5).map(mailRow).join(''):'<div class="empty-state">Noch keine Nachrichten synchronisiert.</div>'}</section>`;
   if(activeView==='activity') content=renderActivityCenter();
   if(activeView==='shadow') content=renderShadowCenter();
+  if(activeView==='system') content=renderSystemHealth();
   if(activeView==='inbox') content=`<section class="panel full"><div class="panel-head"><div><span>LOKAL SYNCHRONISIERT</span><h3>${esc(mailbox?.email_address||'Inbox')}</h3></div><span class="muted">${sync.last_synced_at?`Zuletzt ${esc(new Date(sync.last_synced_at).toLocaleString())}`:'Noch kein Sync'}</span></div>${dashboard.messages.length?dashboard.messages.map(mailRow).join(''):emptyState('inbox','Deine Inbox ist noch leer','Starte die erste Synchronisierung oben rechts.')}</section>`;
   if(activeView==='approvals') content=`<section class="panel full"><div class="panel-head"><div><span>HUMAN-IN-THE-LOOP</span><h3>Freigabe-Queue</h3></div><span class="badge">${dashboard.approvals.length} offen</span></div>${dashboard.approvals.length?dashboard.approvals.map(approvalCard).join(''):emptyState('shield','Alles erledigt','Es gibt aktuell keine offenen Aktionen.')}</section>`;
   if(activeView==='drafts') content=`<section class="panel full"><div class="panel-head"><div><span>VORBEREITET VON ${esc((form.agentName||'Agent').toUpperCase())}</span><h3>Entwürfe</h3></div><span class="badge">${dashboard.drafts.length}</span></div>${dashboard.drafts.length?dashboard.drafts.map(draftCard).join(''):emptyState('draft','Noch keine Entwürfe','Sobald dein Agent Antworten vorbereitet, erscheinen sie hier.')}</section>`;
@@ -216,7 +219,7 @@ function renderDashboard(){
   app.innerHTML=dashboardLayout(content); if(activeView==='settings')renderUpdatePanel(); bindDashboard();
 }
 function mailRow(item){const preview=String(item.agent_summary||item.body_text||'').replace(/\s+/g,' ').slice(0,140);const priority=item.agent_priority||'';const category=item.agent_category||'';const intelligence=`<div class="intel-badges">${priority?`<span class="intel-badge ${esc(priority)}">${esc(priority)}</span>`:''}${category?`<span class="intel-badge">${esc(category)}</span>`:''}${item.needs_reply===true?'<span class="intel-badge">Antwort nötig</span>':''}</div>`;return `<article class="mail-row"><span class="mail-avatar">${esc((item.sender||'?').slice(0,1).toUpperCase())}</span><div class="mail-main"><div class="mail-line"><b>${esc(item.sender||'Unbekannt')}</b><span>${esc(item.sent_at?new Date(item.sent_at).toLocaleDateString():'')}</span></div><h4>${esc(item.subject||'(ohne Betreff)')}</h4>${intelligence}<p>${esc(preview)}${String(item.agent_summary||item.body_text||'').length>140?'…':''}</p></div><span class="row-arrow">${icon('chevron',17)}</span></article>`;}
-function approvalCard(item){const p=item.proposal||{};const failed=item.status==='approved'&&item.execution_status==='failed';const sends=['send_reply','forward'].includes(item.action);const status=failed?`<span class="delivery-failed">Ausführung fehlgeschlagen · ${esc(item.execution_error||'erneut versuchen')}</span>`:`<span>Risiko: ${esc(item.policy?.risk||'')}</span>`;const retryLabel=sends?'Erneut senden':'Erneut ausführen';const approveLabel=sends?'Freigeben & senden':'Freigeben & ausführen';const actions=failed?`<button class="btn primary compact" data-execute="${esc(item.approval_id)}">${icon('sync',15)} ${retryLabel}</button>`:`<button class="btn secondary compact" data-reject="${esc(item.approval_id)}">${icon('x',15)} Ablehnen</button><button class="btn primary compact" data-approve="${esc(item.approval_id)}">${icon('check',15)} ${approveLabel}</button>`;return `<article class="approval"><span class="risk-icon">${icon('shield',19)}</span><div class="approval-copy"><div class="mail-line"><b>${esc(item.action)}</b>${status}</div><h4>${esc(p.subject||p.destination_folder||p.recipient||'Mail-Aktion')}</h4><p>${esc(p.summary||p.reason||item.policy?.reason||'')}</p></div><div class="approval-actions">${actions}</div></article>`;}
+function approvalCard(item){const p=item.proposal||{};const execution=item.execution_status||'';const failed=item.status==='approved'&&execution==='failed';const uncertain=item.status==='approved'&&execution==='uncertain';const ready=item.status==='approved'&&execution==='ready';const sends=['send_reply','forward'].includes(item.action);const status=uncertain?`<span class="delivery-failed">Versandstatus unklar · ${esc(item.execution_error||'Gesendet-Ordner prüfen')}</span>`:failed?`<span class="delivery-failed">Ausführung fehlgeschlagen · ${esc(item.execution_error||'erneut versuchen')}</span>`:ready?'<span>Erneuter Versuch freigegeben</span>':`<span>Risiko: ${esc(item.policy?.risk||'')}</span>`;const retryLabel=sends?'Erneut senden':'Erneut ausführen';const approveLabel=sends?'Freigeben & senden':'Freigeben & ausführen';let actions='';if(uncertain)actions=`<button class="btn secondary compact" data-reconcile-sent="${esc(item.approval_id)}">${icon('check',15)} Bereits gesendet</button><button class="btn primary compact" data-reconcile-retry="${esc(item.approval_id)}">${icon('sync',15)} Nicht gesendet</button>`;else if(failed||ready)actions=`<button class="btn primary compact" data-execute="${esc(item.approval_id)}">${icon('sync',15)} ${retryLabel}</button>`;else actions=`<button class="btn secondary compact" data-reject="${esc(item.approval_id)}">${icon('x',15)} Ablehnen</button><button class="btn primary compact" data-approve="${esc(item.approval_id)}">${icon('check',15)} ${approveLabel}</button>`;return `<article class="approval"><span class="risk-icon">${icon('shield',19)}</span><div class="approval-copy"><div class="mail-line"><b>${esc(item.action)}</b>${status}</div><h4>${esc(p.subject||p.destination_folder||p.recipient||'Mail-Aktion')}</h4><p>${uncertain?'MAIL-AGENT wurde während der Ausführung beendet. Prüfe zuerst den Gesendet-Ordner; ein automatischer Retry könnte die Mail doppelt senden.':esc(p.summary||p.reason||item.policy?.reason||'')}</p></div><div class="approval-actions">${actions}</div></article>`;}
 function draftCard(item){
   const editable=item.status!=='sent';
   const editing=editingDraftId===item.draft_id;
@@ -348,6 +351,56 @@ async function simulateRule(){
   catch(e){showNotice(e.message,'error');}
 }
 
+function healthStatusLabel(value){return ({ok:'Bereit',warning:'Warnung',error:'Aktion nötig'})[value]||value||'Unbekannt';}
+function healthActionButton(check){
+  if(!check.action)return '';
+  const labels={retry_sync:'Sync erneut versuchen',open_llm_settings:'LLM-Einstellungen öffnen',open_approvals:'Freigaben öffnen',review_uncertain:'Versandstatus prüfen',reconnect_mailbox:'Postfach neu verbinden',open_mailbox_setup:'Postfach einrichten',open_logs:'Diagnose anzeigen',restart_onboarding:'Einrichtung prüfen'};
+  return `<button class="btn secondary compact" data-health-action="${esc(check.action)}" data-health-mailbox="${esc(check.data?.mailbox_id||'')}">${esc(labels[check.action]||'Öffnen')}</button>`;
+}
+function renderSystemHealth(){
+  const health=systemHealth||{};
+  const summary=health.summary||{};
+  const checks=health.checks||[];
+  const overall=health.overall||'checking';
+  const headline=overall==='ok'?'Alles bereit':overall==='degraded'?'System läuft mit Hinweisen':'Aktion erforderlich';
+  const detail=overall==='ok'?'Gateway, lokaler Speicher, Datenbank, Agentenidentität, Postfach und LLM sind bereit.':overall==='degraded'?'MAIL-AGENT läuft weiter, aber mindestens ein Bereich sollte geprüft werden.':'Mindestens ein Problem braucht deine Entscheidung oder erneute Verbindung.';
+  return `<div class="system-center"><section class="panel activity-hero"><div><span class="hero-kicker">RELIABILITY & RECOVERY</span><h2>${esc(headline)}</h2><p>${esc(detail)}</p><div class="hero-actions"><button class="btn primary" id="system-health-refresh" ${systemHealthLoading?'disabled':''}>${systemHealthLoading?'Prüfe …':'System prüfen'}</button></div></div><div class="hero-orb">${icon(overall==='ok'?'check':'shield',34)}</div></section><div class="stats-grid">${metric('Bereit',summary.ok||0,'erfolgreiche Prüfungen','check')}${metric('Warnungen',summary.warning||0,'weiterhin funktionsfähig','sync')}${metric('Fehler',summary.error||0,'brauchen Aufmerksamkeit','shield')}${metric('Geprüft',health.checked_at?new Date(health.checked_at).toLocaleTimeString():'—','lokale Selbstdiagnose','settings')}</div><section class="panel full"><div class="panel-head"><div><span>SELBSTDIAGNOSE</span><h3>Komponenten & Recovery</h3></div><span class="badge ${overall==='ok'?'soft':''}">${esc(overall.toUpperCase())}</span></div>${checks.length?checks.map(check=>`<div class="security-block health-check ${esc(check.status||'')}"><span>${icon(check.status==='ok'?'check':check.status==='warning'?'sync':'shield',22)}</span><div><b>${esc(check.id||'Prüfung')} · ${esc(healthStatusLabel(check.status))}</b><p>${esc(check.detail||'')}</p>${healthActionButton(check)}</div></div>`).join(''):emptyState('settings','Noch nicht geprüft','Starte die lokale Selbstdiagnose.')}</section><section class="panel full"><div class="security-note">${icon('shield',18)}<span>Nach einem Absturz während Send/Forward versucht MAIL-AGENT niemals automatisch erneut zu senden. Ein unklarer Versandstatus muss zuerst von dir abgeglichen werden.</span></div></section></div>`;
+}
+async function loadSystemHealth(silent=false){
+  if(systemHealthLoading)return;
+  systemHealthLoading=true;
+  try{systemHealth=await get('/v1/system/health');}
+  catch(e){if(!silent)showNotice(e.message,'error');}
+  finally{systemHealthLoading=false;}
+}
+async function handleHealthAction(action,mailboxId){
+  if(action==='retry_sync'){
+    try{await post('/v1/sync/run',{mailbox_id:mailboxId||null,limit:100});await Promise.all([loadDashboard(true),loadSystemHealth(true)]);showNotice('Synchronisierung erneut ausgeführt.');render();}catch(e){showNotice(e.message,'error');}
+    return;
+  }
+  if(action==='open_llm_settings'){activeView='settings';await loadRuntimeSettings(true);render();return;}
+  if(['open_approvals','review_uncertain'].includes(action)){activeView='approvals';await loadDashboard(true);render();return;}
+  if(action==='reconnect_mailbox'){
+    const mailbox=dashboard.mailboxes.find(item=>item.mailbox_id===mailboxId)||dashboard.mailboxes[0];
+    if(!mailbox){showNotice('Postfach nicht gefunden.','error');return;}
+    form.emailAddress=mailbox.email_address||form.emailAddress;
+    if(mailbox.connector==='gmail_api')await connectGoogle();
+    else if(mailbox.connector==='microsoft_graph')await connectMicrosoft();
+    else {showNotice('Für ein manuelles IMAP-Postfach müssen die Zugangsdaten im Postfach-Setup erneut eingegeben werden.','error');return;}
+    await Promise.all([loadDashboard(true),loadSystemHealth(true)]);render();return;
+  }
+  if(action==='open_mailbox_setup'){showNotice('Postfachverbindung ist noch nicht eingerichtet.');return;}
+  showNotice('Der Diagnosehinweis wurde protokolliert. Weitere Details stehen im lokalen MAIL-AGENT-Log.');
+}
+async function reconcileApproval(id,outcome){
+  try{
+    const result=await post(`/v1/system/recovery/approvals/${encodeURIComponent(id)}/reconcile`,{outcome,actor:'local-user'});
+    await Promise.all([loadDashboard(true),loadSystemHealth(true)]);
+    showNotice(outcome==='already_sent'?'Als bereits gesendet bestätigt. Es wird nichts erneut versendet.':'Als nicht gesendet markiert. Ein erneuter Versand ist jetzt separat möglich.');
+    render();
+  }catch(e){showNotice(e.message,'error');}
+}
+
 function brainLearningCard(item){return `<div class="security-block"><span>${icon('spark',22)}</span><div><b>${esc(item.title||'Lernvorschlag')}</b><p>${esc(item.reason||'')}</p><small>${esc(item.memory_line||'')}</small><div class="inline-actions left"><button class="btn secondary compact" data-learning-reject="${esc(item.candidate_id)}">Verwerfen</button><button class="btn primary compact" data-learning-accept="${esc(item.candidate_id)}">Übernehmen</button></div></div></div>`;}
 function renderAgentSettings(){
   const rs=runtimeSettings||{};
@@ -465,7 +518,7 @@ async function runAgentNow(){
 function renderUpdatePanel(){
   const grid=document.querySelector('.settings-grid');
   if(!grid)return;
-  const current=updateStatus?.current_version||'0.10.0';
+  const current=updateStatus?.current_version||'0.12.0';
   const available=!!updateStatus?.available;
   const error=updateStatus?.error||'';
   const headline=available?`Version ${esc(updateStatus.latest_version)} verfügbar`:error?'Update-Kanal nicht erreichbar':'Du bist auf dem neuesten Stand';
@@ -503,11 +556,15 @@ document.addEventListener('click',event=>{
 });
 
 function bindDashboard(){
-  document.querySelectorAll('[data-view]').forEach(el=>el.onclick=async()=>{activeView=el.dataset.view;if(['settings','activity','shadow'].includes(activeView))await Promise.all([runtimeSettings?Promise.resolve():loadRuntimeSettings(true),loadBrainStatus(true),activeView==='shadow'?loadShadowStatus(true):Promise.resolve()]);render();});
+  document.querySelectorAll('[data-view]').forEach(el=>el.onclick=async()=>{activeView=el.dataset.view;if(['settings','activity','shadow','system'].includes(activeView))await Promise.all([runtimeSettings?Promise.resolve():loadRuntimeSettings(true),loadBrainStatus(true),activeView==='shadow'?loadShadowStatus(true):Promise.resolve(),activeView==='system'?loadSystemHealth(true):Promise.resolve()]);render();});
   document.getElementById('sync-now')?.addEventListener('click',syncNow);
   document.querySelectorAll('[data-approve]').forEach(el=>el.onclick=()=>decideApproval(el.dataset.approve,'approve'));
   document.querySelectorAll('[data-reject]').forEach(el=>el.onclick=()=>decideApproval(el.dataset.reject,'reject'));
   document.querySelectorAll('[data-execute]').forEach(el=>el.onclick=()=>retryApproval(el.dataset.execute));
+  document.querySelectorAll('[data-reconcile-sent]').forEach(el=>el.onclick=()=>reconcileApproval(el.dataset.reconcileSent,'already_sent'));
+  document.querySelectorAll('[data-reconcile-retry]').forEach(el=>el.onclick=()=>reconcileApproval(el.dataset.reconcileRetry,'retry'));
+  document.getElementById('system-health-refresh')?.addEventListener('click',async()=>{await loadSystemHealth(false);render();});
+  document.querySelectorAll('[data-health-action]').forEach(el=>el.onclick=()=>handleHealthAction(el.dataset.healthAction,el.dataset.healthMailbox));
   document.querySelectorAll('[data-draft-edit]').forEach(el=>el.onclick=()=>{editingDraftId=el.dataset.draftEdit;render();});
   document.querySelectorAll('[data-draft-cancel]').forEach(el=>el.onclick=()=>{editingDraftId=null;render();});
   document.querySelectorAll('[data-draft-save]').forEach(el=>el.onclick=()=>saveDraft(el.dataset.draftSave));
@@ -542,5 +599,5 @@ async function retryApproval(id){try{const result=await post(`/v1/approvals/${en
 async function saveDraft(id){const card=document.querySelector('.draft-editor');if(!card)return;const body=card.querySelector('[data-draft-body]')?.value||'';const subject=card.querySelector('[data-draft-subject]')?.value||'';const recipient=card.querySelector('[data-draft-recipient]')?.value||null;try{await put(`/v1/drafts/${encodeURIComponent(id)}`,{subject,body,recipient,actor:'local-user'});editingDraftId=null;await Promise.all([loadDashboard(true),loadBrainStatus(true)]);showNotice('Entwurf gespeichert, neu signiert und als Besitzer-Feedback berücksichtigt.');render();}catch(e){showNotice(e.message,'error');}}
 async function submitDraft(id){try{await post(`/v1/drafts/${encodeURIComponent(id)}/submit`,{actor:'local-user'});await loadDashboard(true);showNotice('Entwurf wartet jetzt auf Freigabe.');render();}catch(e){showNotice(e.message,'error');}}
 function render(){installed?renderDashboard():renderSetup();}
-async function boot(){try{const [status,oauth]=await Promise.all([get('/v1/onboarding/status'),get('/v1/oauth/providers').catch(()=>({google:{configured:false}}))]);oauthProviders=oauth||oauthProviders;if(status.identity){identity=status.identity;form.ownerId=identity.owner_id||'';form.agentName=identity.agent_name||'Nova';form.usageType=identity.usage_type||'private';}const mb=status.mailboxes?.[0]||status.mailbox;if(mb){mailboxConnected=true;mailboxId=mb.mailbox_id;mailboxConnector=mb.connector||'imap';form.emailAddress=mb.email_address||'';form.mailboxUsername=mb.username||'';form.imapHost=mb.imap_host||'';form.imapPort=mb.imap_port||993;form.smtpHost=mb.smtp_host||'';form.smtpPort=mb.smtp_port||465;}if(status.configuration){const c=status.configuration,p=c.profile||{};form.provider=c.provider||form.provider;form.model=c.model||form.model;form.autonomy=p.autonomy_mode||form.autonomy;form.language=p.language||form.language;form.tone=p.tone||form.tone;form.emailSignature=p.email_signature||'';}installed=!!status.completed;if(installed)await Promise.all([loadDashboard(true),loadRuntimeSettings(true),loadBrainStatus(true)]);}catch(e){showNotice(`Gateway nicht bereit: ${e.message}`,'error')}render();}
+async function boot(){try{const [status,oauth]=await Promise.all([get('/v1/onboarding/status'),get('/v1/oauth/providers').catch(()=>({google:{configured:false}}))]);oauthProviders=oauth||oauthProviders;if(status.identity){identity=status.identity;form.ownerId=identity.owner_id||'';form.agentName=identity.agent_name||'Nova';form.usageType=identity.usage_type||'private';}const mb=status.mailboxes?.[0]||status.mailbox;if(mb){mailboxConnected=true;mailboxId=mb.mailbox_id;mailboxConnector=mb.connector||'imap';form.emailAddress=mb.email_address||'';form.mailboxUsername=mb.username||'';form.imapHost=mb.imap_host||'';form.imapPort=mb.imap_port||993;form.smtpHost=mb.smtp_host||'';form.smtpPort=mb.smtp_port||465;}if(status.configuration){const c=status.configuration,p=c.profile||{};form.provider=c.provider||form.provider;form.model=c.model||form.model;form.autonomy=p.autonomy_mode||form.autonomy;form.language=p.language||form.language;form.tone=p.tone||form.tone;form.emailSignature=p.email_signature||'';}installed=!!status.completed;if(installed)await Promise.all([loadDashboard(true),loadRuntimeSettings(true),loadBrainStatus(true),loadSystemHealth(true)]);}catch(e){showNotice(`Gateway nicht bereit: ${e.message}`,'error')}render();}
 boot();

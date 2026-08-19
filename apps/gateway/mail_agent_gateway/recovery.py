@@ -44,8 +44,8 @@ class RecoveryManager:
         self.live_queue = AgentWorkQueue(mail_store)
         self.shadow_queue = AgentWorkQueue(mail_store, processing_table="agent_shadow_processing")
 
-    def recover_stale_executions(self, *, max_age_seconds: int = 300) -> dict[str, int]:
-        cutoff = (datetime.now(UTC) - timedelta(seconds=max(30, max_age_seconds))).isoformat()
+    def recover_stale_executions(self, *, max_age_seconds: int = 0) -> dict[str, int]:
+        cutoff = (datetime.now(UTC) - timedelta(seconds=max(0, max_age_seconds))).isoformat()
         outbound_uncertain = 0
         retryable_failed = 0
         with self.mail_store._lock, self.mail_store._connect() as conn:
