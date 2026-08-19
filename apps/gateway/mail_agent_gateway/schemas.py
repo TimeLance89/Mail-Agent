@@ -102,6 +102,11 @@ class ApprovalDecisionRequest(BaseModel):
     actor: str = Field(default="local-user", min_length=1, max_length=200)
 
 
+class RecoveryReconcileRequest(BaseModel):
+    outcome: Literal["already_sent", "retry"]
+    actor: str = Field(default="local-user", min_length=1, max_length=200)
+
+
 class DraftUpdateRequest(BaseModel):
     subject: str = Field(default="", max_length=998)
     body: str = Field(min_length=1, max_length=200_000)
