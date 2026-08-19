@@ -174,7 +174,10 @@
 
       if (activeView === 'overview') {
         const kicker = document.querySelector('.hero-card .hero-kicker');
-        if (kicker) kicker.textContent = status.label.toUpperCase();
+        if (kicker) {
+          const text = status.label.toUpperCase();
+          if (kicker.textContent !== text) kicker.textContent = text;
+        }
       }
     } finally {
       applyingStatus = false;
@@ -207,7 +210,7 @@
   const appRoot = document.getElementById('app');
   if (appRoot) {
     const observer = new MutationObserver(() => applyLiveStatus());
-    observer.observe(appRoot, { childList: true, subtree: true });
+    observer.observe(appRoot, { childList: true });
   }
 
   document.addEventListener('visibilitychange', () => {
