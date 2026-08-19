@@ -44,7 +44,58 @@ class NotificationTracker:
     initialized: bool = False
     approval_ids: set[str] = field(default_factory=set)
     draft_ids: set[str] = field(default_factory=set)
-    health_error_ids: set[str] = field(default_factory=set)
+    health_issue_keys: set[str] = field(default_factory=set)
+
+    @staticmethod
+    def _health_issues(health: dict[str, Any]) -> set[str]:
+        return {
+            f"{item.get('id')}|{item.get('status')}"
+            for item in health.get("checks", [])
+            if item.get("status") in {"warning", "error"} and item.get("id")
+        }
+
+    @staticmethod
+    def _health_notifications(issue_keys: set[str]) -> list[DesktopNotification]:
+        check_ids = {key.rsplit("|", 1)[0] for key in issue_keys}
+        notifications: list[DesktopNotification] = []
+        if any(check_id.startswith("mailbox") for check_id in check_ids):
+            notifications.append(
+                DesktopNotification(
+                    title="Postfach prüfen",
+                    message="Synchronisierung oder Verbindung braucht Aufmerksamkeit.",
+                    view="system",
+                )
+            )
+        if "provider" in check_ids:
+            notifications.append(
+                DesktopNotification(
+                    title="KI-Provider prüfen",
+                    message="Das ausgewählte Modell ist momentan nicht bereit.",
+                    view="system",
+                )
+            )
+        if "execution" in check_ids:
+            notifications.append(
+                DesktopNotification(
+                    title="Mail-Aktion prüfen",
+                    message="Eine Ausführung braucht deine Aufmerksamkeit.",
+                    view="approvals",
+                )
+            )
+        covered = {
+            check_id
+            for check_id in check_ids
+            if check_id.startswith("mailbox") or check_id in {"provider", "execution"}
+        }
+        if check_ids - covered:
+            notifications.append(
+                DesktopNotification(
+                    title="MAIL-AGENT braucht Aufmerksamkeit",
+                    message="Ein Systemhinweis sollte geprüft werden.",
+                    view="system",
+                )
+            )
+        return notifications
 
     def observe(
         self,
@@ -63,23 +114,19 @@ class NotificationTracker:
             and item.get("status") != "sent"
             and not item.get("approval_id")
         }
-        health_error_ids = {
-            str(item.get("id"))
-            for item in health.get("checks", [])
-            if item.get("status") == "error" and item.get("id")
-        }
+        health_issue_keys = self._health_issues(health)
 
         if not self.initialized:
             self.initialized = True
             self.approval_ids = approval_ids
             self.draft_ids = draft_ids
-            self.health_error_ids = health_error_ids
+            self.health_issue_keys = health_issue_keys
             return []
 
         notifications: list[DesktopNotification] = []
         new_approvals = approval_ids - self.approval_ids
         new_drafts = draft_ids - self.draft_ids
-        new_health_errors = health_error_ids - self.health_error_ids
+        new_health_issues = health_issue_keys - self.health_issue_keys
 
         if new_approvals:
             count = len(new_approvals)
@@ -107,18 +154,11 @@ class NotificationTracker:
                     view="drafts",
                 )
             )
-        if new_health_errors:
-            notifications.append(
-                DesktopNotification(
-                    title="MAIL-AGENT braucht Aufmerksamkeit",
-                    message="Ein Systemproblem sollte geprüft werden.",
-                    view="system",
-                )
-            )
+        notifications.extend(self._health_notifications(new_health_issues))
 
         self.approval_ids = approval_ids
         self.draft_ids = draft_ids
-        self.health_error_ids = health_error_ids
+        self.health_issue_keys = health_issue_keys
         return notifications
 
 
