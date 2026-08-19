@@ -134,10 +134,75 @@ class CodexCliProvider(LLMProvider):
         except Exception as exc:
             return ProviderHealth(False, f"Codex check failed: {exc}")
 
+    @staticmethod
+    def _models_from_catalog(payload: Any) -> list[str]:
+        """Extract user-visible model slugs from Codex' JSON model catalog."""
+
+        if isinstance(payload, dict):
+            entries = payload.get("models", [])
+        elif isinstance(payload, list):
+            entries = payload
+        else:
+            entries = []
+
+        models: list[str] = []
+        for entry in entries:
+            if isinstance(entry, str):
+                slug = entry.strip()
+                visibility = "list"
+            elif isinstance(entry, dict):
+                slug = str(
+                    entry.get("slug") or entry.get("model") or entry.get("id") or ""
+                ).strip()
+                visibility = str(entry.get("visibility") or "list").strip().lower()
+            else:
+                continue
+            if not slug or visibility in {"hide", "hidden", "internal"}:
+                continue
+            if slug not in models:
+                models.append(slug)
+        return models
+
+    async def _debug_model_catalog(self, *, bundled: bool, timeout: float) -> list[str]:
+        args = ["debug", "models"]
+        if bundled:
+            args.append("--bundled")
+        command = self._command(*args)
+        proc = await asyncio.create_subprocess_exec(
+            *command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            creationflags=_hidden_process_creationflags(),
+        )
+        try:
+            stdout, _stderr = await asyncio.wait_for(proc.communicate(), timeout=timeout)
+        except TimeoutError:
+            proc.kill()
+            await proc.communicate()
+            return []
+        if proc.returncode != 0:
+            return []
+        try:
+            return self._models_from_catalog(json.loads(stdout.decode(errors="replace")))
+        except (json.JSONDecodeError, UnicodeError):
+            return []
+
     async def list_models(self) -> list[str]:
-        # The official client owns actual model availability and subscription limits. `default`
-        # delegates model choice to Codex; Settings may also persist an explicit CLI model id.
-        return ["default"]
+        """Discover models from the user's installed official Codex client.
+
+        `codex debug models` refreshes/reads the effective Codex model catalog. If that is not
+        supported by an older client or temporarily fails, the bundled catalog is used as a local
+        fallback. The UI keeps `default` as a separate provider-managed choice, so this method only
+        returns real model ids discovered from Codex.
+        """
+
+        try:
+            models = await self._debug_model_catalog(bundled=False, timeout=8.0)
+            if models:
+                return models
+            return await self._debug_model_catalog(bundled=True, timeout=3.0)
+        except (RuntimeError, OSError):
+            return []
 
     def start_chatgpt_login(self) -> str:
         command = self._command("--login")
