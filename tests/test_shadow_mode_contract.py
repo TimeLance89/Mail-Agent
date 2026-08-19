@@ -1,6 +1,14 @@
 from __future__ import annotations
 
 from pathlib import Path
+import re
+
+
+def _project_version() -> str:
+    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+    match = re.search(r'^version = "([0-9]+\.[0-9]+\.[0-9]+)"$', pyproject, re.MULTILINE)
+    assert match is not None
+    return match.group(1)
 
 
 def test_shadow_mode_api_contract_is_exposed():
@@ -21,14 +29,13 @@ def test_shadow_mode_ui_explains_zero_side_effects():
     assert "0 Side Effects" in web or "0 SIDE EFFECTS" in web
 
 
-def test_version_is_synchronized_for_010():
-    pyproject = Path("pyproject.toml").read_text(encoding="utf-8")
+def test_shadow_mode_version_matches_current_release():
+    version = _project_version()
     gateway = Path("apps/gateway/mail_agent_gateway/main.py").read_text(encoding="utf-8")
     launcher = Path("apps/launcher/mail_agent_launcher/main.py").read_text(encoding="utf-8")
     installer = Path("packaging/windows/MailAgent.iss").read_text(encoding="utf-8")
     identity = Path("packages/agent_core/mail_agent_core/identity.py").read_text(encoding="utf-8")
-    assert 'version = "0.10.0"' in pyproject
-    assert 'APP_VERSION = "0.10.0"' in gateway
-    assert 'APP_VERSION = "0.10.0"' in launcher
-    assert '#define MyAppVersion "0.10.0"' in installer
-    assert 'app_version: str = "0.10.0"' in identity
+    assert f'APP_VERSION = "{version}"' in gateway
+    assert f'APP_VERSION = "{version}"' in launcher
+    assert f'#define MyAppVersion "{version}"' in installer
+    assert f'app_version: str = "{version}"' in identity
