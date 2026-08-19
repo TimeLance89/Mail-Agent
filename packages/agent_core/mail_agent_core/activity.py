@@ -34,6 +34,11 @@ _SAFE_DATA_KEYS = {
     "execution_status",
     "artifact",
     "outcome",
+    "execution_mode",
+    "shadow_run_id",
+    "planned_artifacts",
+    "side_effects",
+    "matched_rule",
 }
 _FORBIDDEN_KEY_PARTS = {
     "body",
@@ -267,6 +272,8 @@ class AgentActivityStore:
                 continue
             if value is None or isinstance(value, (bool, int, float)):
                 result[key_text] = value
+            elif isinstance(value, (list, tuple)):
+                result[key_text] = [_safe_text(item, 96) for item in list(value)[:8]]
             else:
                 result[key_text] = _safe_text(value, 500)
         return result
