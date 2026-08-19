@@ -119,6 +119,33 @@ async def test_codex_model_discovery_falls_back_to_bundled_catalog(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_codex_model_discovery_timeout_terminates_process_tree(monkeypatch):
+    monkeypatch.setattr("mail_agent_core.providers.shutil.which", lambda _: "/fake/codex")
+    monkeypatch.setattr("mail_agent_core.providers._hidden_process_creationflags", lambda: 0)
+
+    proc = Mock(returncode=None, pid=321)
+    proc.communicate = AsyncMock(side_effect=TimeoutError)
+    create = AsyncMock(return_value=proc)
+    terminate = AsyncMock()
+    monkeypatch.setattr("mail_agent_core.providers.asyncio.create_subprocess_exec", create)
+    monkeypatch.setattr("mail_agent_core.providers._terminate_process_tree", terminate)
+
+    models = await CodexCliProvider("codex")._debug_model_catalog(bundled=False, timeout=0.01)
+
+    assert models == []
+    terminate.assert_awaited_once_with(proc)
+
+
+def test_windows_codex_cleanup_is_process_tree_aware_and_bounded():
+    source = (ROOT / "packages/agent_core/mail_agent_core/providers.py").read_text(
+        encoding="utf-8"
+    )
+    assert '["taskkill", "/PID", str(pid), "/T", "/F"]' in source
+    assert "await asyncio.wait_for(proc.wait(), timeout=2.0)" in source
+    assert "await proc.communicate()" not in source.split("async def _terminate_process_tree", 1)[1].split("class LLMProvider", 1)[0]
+
+
+@pytest.mark.asyncio
 async def test_codex_model_discovery_returns_empty_when_cli_is_missing(monkeypatch):
     monkeypatch.setattr("mail_agent_core.providers.shutil.which", lambda _: None)
     assert await CodexCliProvider("codex").list_models() == []
