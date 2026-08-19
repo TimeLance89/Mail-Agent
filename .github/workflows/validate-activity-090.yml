@@ -24,6 +24,11 @@ jobs:
         run: |
           if [ -f tools/apply_activity_ui_090.py ]; then
             python tools/apply_activity_ui_090.py
+            python - <<'PY'
+          from pathlib import Path
+          path = Path("apps/web/agent-settings.css")
+          path.write_text(path.read_text(encoding="utf-8").rstrip() + "\n", encoding="utf-8")
+          PY
             rm tools/apply_activity_ui_090.py
           else
             echo "Activity integration helper already removed; validating clean product head."
@@ -43,7 +48,7 @@ jobs:
             exit 0
           fi
           git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git config user.email "41898282+TimeLance89@users.noreply.github.com"
           git add -A
           git commit -m "feat: integrate Agent Activity Center 0.9.0"
           git push origin HEAD:feat/agent-activity-center-0.9.0
