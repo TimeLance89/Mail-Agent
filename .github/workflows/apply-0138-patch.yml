@@ -4,9 +4,9 @@ permissions:
   contents: write
 
 on:
-  push:
+  pull_request:
     branches:
-      - feat/attention-auto-mail-handling-0.13.8
+      - main
 
 jobs:
   apply:
@@ -15,6 +15,7 @@ jobs:
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: feat/attention-auto-mail-handling-0.13.8
           fetch-depth: 0
       - uses: actions/setup-python@v5
         with:
