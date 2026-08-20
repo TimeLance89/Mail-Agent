@@ -7,11 +7,9 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 from fastapi import HTTPException
 
 from . import main_v16 as previous
-from .calendar_concierge import (
-    CalendarConcierge,
-    CalendarConciergeRequest,
-    CalendarMailReplyRequest,
-)
+from .calendar_concierge import CalendarConciergeRequest, CalendarMailReplyRequest
+from .calendar_concierge_v17 import ReliableCalendarConcierge
+from .calendar_mail_intent import calendar_mail_suggestions
 from .calendar_reliable import (
     CalendarConflictError,
     CalendarFreeSlotRequest,
@@ -43,7 +41,7 @@ calendar_service = ReliableCalendarService(
     google_client_secret=base.settings.google_client_secret,
     audit_log=base.audit_log,
 )
-calendar_concierge = CalendarConcierge(
+calendar_concierge = ReliableCalendarConcierge(
     calendar_service=calendar_service,
     model_router=previous.model_router,
     providers=base.providers,
@@ -170,6 +168,7 @@ async def calendar_status() -> dict[str, Any]:
         "free_slot_finder",
         "assistant",
         "mail_to_calendar",
+        "mail_schedule_detection",
         "availability_reply_draft",
         "approval_gated_mutations",
         "optimistic_concurrency",
@@ -286,6 +285,23 @@ async def calendar_briefing(
         }
     except Exception as exc:
         raise _calendar_http_error(exc, operation="Calendar briefing") from exc
+
+
+@base.app.get("/v1/calendar/mail-suggestions")
+async def calendar_mail_candidates(mailbox_id: str, limit: int = 100) -> dict[str, Any]:
+    try:
+        base._mailbox_by_id(mailbox_id)
+        return {
+            "mailbox_id": mailbox_id,
+            "suggestions": calendar_mail_suggestions(
+                base.mail_store,
+                mailbox_id,
+                limit=max(1, min(int(limit), 300)),
+            ),
+            "side_effects": False,
+        }
+    except Exception as exc:
+        raise _calendar_http_error(exc, operation="Calendar mail suggestions") from exc
 
 
 @base.app.post("/v1/calendar/assist")
