@@ -466,7 +466,16 @@ class AgentRuntime:
                             message_id=message.message_id,
                             thread_id=message.thread_id,
                             action=analysis.proposal.action.value,
-                            payload={"source": source_before, "execution": execution},
+                            payload={
+                                "source": {
+                                    key: source_before.get(key)
+                                    for key in ("mailbox_id", "uid", "remote_id", "internet_message_id", "thread_key", "connector")
+                                },
+                                "execution": {
+                                    key: execution.get(key)
+                                    for key in ("connector", "action", "remote_id", "source_remote_id", "destination")
+                                },
+                            },
                             ttl_seconds=behavior.safe_action_undo_seconds,
                         )
                         execution = {**execution, "undo": undo}

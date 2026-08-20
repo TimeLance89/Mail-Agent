@@ -7,7 +7,7 @@ from mail_agent_core.models import MailActionType
 
 from .action_executor import MailActionExecutor
 from .conversation_store import ConversationStore
-from .mail_store import MailStore, StoredMessage
+from .mail_store import MailStore
 
 
 class UndoService:
@@ -77,7 +77,6 @@ class UndoService:
                 raise RuntimeError("Gmail-Nachricht besitzt keine Remote-ID")
             client = await self.action_executor._google_client(mailbox)
             await client.modify_message(remote_id, add_label_ids=["INBOX"])
-            self._restore_local_source(source)
 
         elif action == MailActionType.ARCHIVE and connector == "microsoft_graph":
             remote_id = str(execution.get("remote_id") or source.get("remote_id") or "")
@@ -85,31 +84,14 @@ class UndoService:
                 raise RuntimeError("Microsoft-Nachricht besitzt keine Remote-ID")
             client = await self.action_executor._microsoft_client(mailbox)
             await client.move_message(remote_id, "inbox")
-            self._restore_local_source(source)
         else:
             raise RuntimeError("Diese Aktion ist absichtlich nicht rückgängig machbar")
 
         self.conversation_store.complete_undo(token)
-        return {"token": token, "status": "completed", "action": action.value, "mailbox_id": item["mailbox_id"]}
-
-    def _restore_local_source(self, source: dict[str, Any]) -> None:
-        try:
-            stored = StoredMessage(
-                mailbox_id=str(source["mailbox_id"]),
-                uid=int(source["uid"]),
-                internet_message_id=source.get("internet_message_id"),
-                thread_key=str(source.get("thread_key") or source.get("remote_thread_id") or source.get("internet_message_id") or source.get("uid")),
-                sender=str(source.get("sender") or ""),
-                recipients=list(source.get("recipients") or []),
-                subject=str(source.get("subject") or ""),
-                sent_at=source.get("sent_at"),
-                body_text=str(source.get("body_text") or ""),
-                seen=bool(source.get("seen")),
-                remote_id=source.get("remote_id"),
-                remote_thread_id=source.get("remote_thread_id"),
-                connector=str(source.get("connector") or "imap"),
-            )
-            self.mail_store.upsert_messages([stored])
-        except Exception:
-            # The next provider sync will restore the mirror. Remote undo already succeeded.
-            return
+        return {
+            "token": token,
+            "status": "completed",
+            "action": action.value,
+            "mailbox_id": item["mailbox_id"],
+            "resync_required": action == MailActionType.ARCHIVE,
+        }

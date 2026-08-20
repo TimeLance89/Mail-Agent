@@ -478,6 +478,25 @@ class ConversationStore:
             )
         return {"token": token, "action": action, "expires_at": expires.isoformat(), "status": "available"}
 
+    def list_available_undo(self, limit: int = 10) -> list[dict[str, Any]]:
+        now = utc_now()
+        limit = max(1, min(int(limit), 50))
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                "UPDATE undo_actions SET status='expired' WHERE status='available' AND expires_at<=?",
+                (now,),
+            )
+            rows = conn.execute(
+                """
+                SELECT token, mailbox_id, message_id, thread_id, action, created_at, expires_at, status
+                FROM undo_actions
+                WHERE status='available' AND expires_at>?
+                ORDER BY created_at DESC LIMIT ?
+                """,
+                (now, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
     def get_undo(self, token: str) -> dict[str, Any]:
         with self._lock, self._connect() as conn:
             row = conn.execute("SELECT * FROM undo_actions WHERE token=?", (token,)).fetchone()

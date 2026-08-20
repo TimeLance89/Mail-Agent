@@ -200,6 +200,8 @@ class AgentBrain:
             "errors",
             "marked_read",
             "postprocess_errors",
+            "due_followups",
+            "followup_drafts",
             "pending_before",
             "pending_after",
             "skipped",

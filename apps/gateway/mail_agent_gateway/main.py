@@ -1231,6 +1231,7 @@ async def list_conversations(mailbox_id: str | None = None, status: str | None =
             min_samples=behavior.sender_pattern_min_samples,
             confidence_threshold=behavior.sender_pattern_confidence,
         ),
+        "undo_actions": conversation_store.list_available_undo(limit=10),
     }
 
 
