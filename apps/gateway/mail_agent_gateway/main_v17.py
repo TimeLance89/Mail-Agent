@@ -6,6 +6,7 @@ from typing import Any
 from fastapi import HTTPException
 
 from . import main_v16 as previous
+from .calendar_assistant import CalendarAssistant, CalendarAssistantRequest
 from .calendar_service import (
     CalendarApprovalStore,
     CalendarFreeBusyRequest,
@@ -33,6 +34,12 @@ calendar_service = CalendarService(
     google_client_id=base.settings.google_client_id,
     google_client_secret=base.settings.google_client_secret,
     audit_log=base.audit_log,
+)
+calendar_assistant = CalendarAssistant(
+    calendar_service=calendar_service,
+    model_router=previous.model_router,
+    providers=base.providers,
+    mail_store=base.mail_store,
 )
 
 
@@ -171,6 +178,18 @@ async def calendar_freebusy(body: CalendarFreeBusyRequest) -> dict[str, Any]:
         raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Google Calendar request failed: {exc}") from exc
+
+
+@base.app.post("/v1/calendar/assist")
+async def calendar_assist(body: CalendarAssistantRequest) -> dict[str, Any]:
+    try:
+        return await calendar_assistant.propose(body)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Calendar account or source message not found") from exc
+    except (PermissionError, RuntimeError, ValueError) as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Calendar assistant failed: {exc}") from exc
 
 
 @base.app.post("/v1/calendar/proposals")
