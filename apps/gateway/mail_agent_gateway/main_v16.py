@@ -16,13 +16,13 @@ from .adaptive_intelligence import (
     OwnerProfileConsentRequest,
     OwnerProfilePreviewRequest,
     OwnerProfileReview,
-    OwnerProfileService,
     OwnerProfileStore,
     extract_rfc822_signals,
 )
 from .codex_usage_reader import CodexUsageReader
 from .decision_provenance import normalize_decision_path
 from .oauth_runtime import current_google_access_token, current_microsoft_access_token
+from .owner_profile_learning import OwnerProfileService
 
 APP_VERSION = "0.16.0"
 
