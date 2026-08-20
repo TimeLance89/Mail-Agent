@@ -2,6 +2,7 @@
   const APP_VERSION = '0.17.0';
   const allowed = new Set([
     'overview',
+    'calendar',
     'activity',
     'shadow',
     'system',
