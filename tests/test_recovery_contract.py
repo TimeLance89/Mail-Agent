@@ -40,6 +40,16 @@ def test_system_health_ui_and_uncertain_send_reconciliation_are_visible():
     assert "/v1/system/recovery/approvals/" in app
 
 
+def test_adaptive_gateway_loads_only_after_frozen_environment_is_authoritative():
+    entry = (ROOT / "apps/launcher/mail_agent_launcher/v16_entry.py").read_text(encoding="utf-8")
+    configure = "launcher.configure_environment(data_dir)"
+    adaptive_import = "from mail_agent_gateway import main_v16 as _gateway_v16"
+    assert configure in entry
+    assert adaptive_import in entry
+    assert entry.index(configure) < entry.index(adaptive_import)
+    assert "MAIL_AGENT_WEB_DIR" in entry
+
+
 def test_release_version_is_synchronized_for_0160():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     gateway = (ROOT / "apps/gateway/mail_agent_gateway/main_v16.py").read_text(encoding="utf-8")
