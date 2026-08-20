@@ -89,7 +89,10 @@ class ReleaseModelRouter(ModelRouter):
         provider = self.providers.get(endpoint.provider)
         if provider is None:
             return False
-        health = await provider.health()
+        try:
+            health = await provider.health()
+        except Exception:
+            return False
         if not health.available:
             return False
         if endpoint.model == "default":
@@ -106,7 +109,10 @@ class ReleaseModelRouter(ModelRouter):
         provider = self.providers.get("ollama")
         if provider is None:
             return None
-        health = await provider.health()
+        try:
+            health = await provider.health()
+        except Exception:
+            return None
         if not health.available:
             return None
         try:
@@ -203,12 +209,13 @@ class ReleaseAdaptiveMailAgent(AdaptiveMailAgent):
         _DECISION_TRACE.set(None)
         message = kwargs.get("message")
         role = "complex" if message is not None and self._complex(message) else "normal"
-        route = await self.router.route(role)
+        routing = self.router.settings()
+        expert_configured = routing.mode == "expert" and getattr(routing, role, None) is not None
         fallback_used = False
         try:
             analysis = await super().analyze(**kwargs)
         except Exception:
-            if route.source != "expert_override":
+            if not expert_configured:
                 raise
             token = _FORCED_PRIMARY_ROLES.set(frozenset({role}))
             fallback_used = True
@@ -225,11 +232,12 @@ class ReleaseAdaptiveMailAgent(AdaptiveMailAgent):
         return analysis
 
     async def draft_follow_up(self, **kwargs: Any):
-        route = await self.router.route("draft")
+        routing = self.router.settings()
+        expert_configured = routing.mode == "expert" and routing.draft is not None
         try:
             return await super().draft_follow_up(**kwargs)
         except Exception:
-            if route.source != "expert_override":
+            if not expert_configured:
                 raise
             token = _FORCED_PRIMARY_ROLES.set(frozenset({"draft"}))
             try:
@@ -249,7 +257,8 @@ def install_release_runtime_fixes(agent_runtime: Any) -> None:
     original_record = activity.record
 
     def record_with_real_origin(*args: Any, **kwargs: Any):
-        if kwargs.get("stage") == "llm" and kwargs.get("status") == "completed":
+        clear_trace = kwargs.get("stage") == "llm" and kwargs.get("status") == "completed"
+        if clear_trace:
             trace = _DECISION_TRACE.get() or {}
             origin = str(trace.get("decision_origin") or "")
             data = dict(kwargs.get("data") or {})
@@ -272,7 +281,11 @@ def install_release_runtime_fixes(agent_runtime: Any) -> None:
                 kwargs["detail"] = f"{provider or 'LLM'} / {model or 'default'} hat die Mail analysiert."
                 data.update({"provider": provider, "model": model, "decision_origin": origin})
                 kwargs["data"] = data
-        return original_record(*args, **kwargs)
+        try:
+            return original_record(*args, **kwargs)
+        finally:
+            if clear_trace:
+                _DECISION_TRACE.set(None)
 
     activity.record = record_with_real_origin  # type: ignore[method-assign]
     activity._release_0161_trace_installed = True  # type: ignore[attr-defined]
