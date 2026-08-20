@@ -10,7 +10,6 @@ from . import main as base
 from . import sync as sync_module
 from .adaptive_intelligence import (
     AdaptiveMailAgent,
-    AdaptiveSignalStore,
     ModelRouter,
     ModelRoutingRequest,
     OwnerProfileConsentRequest,
@@ -21,6 +20,7 @@ from .adaptive_intelligence import (
 )
 from .codex_usage_reader import CodexUsageReader
 from .decision_provenance import normalize_decision_path
+from .efficiency_store import EfficiencySignalStore
 from .oauth_runtime import current_google_access_token, current_microsoft_access_token
 from .owner_profile_learning import OwnerProfileService
 
@@ -32,7 +32,7 @@ APP_VERSION = "0.16.0"
 base.APP_VERSION = APP_VERSION
 base.app.version = APP_VERSION
 
-signal_store = AdaptiveSignalStore(base.settings.data_dir / "adaptive-intelligence.db")
+signal_store = EfficiencySignalStore(base.settings.data_dir / "adaptive-intelligence.db")
 owner_profile_store = OwnerProfileStore(base.settings.data_dir / "owner-profile.json")
 model_router = ModelRouter(base.state_store, base.providers)
 adaptive_mail_agent = AdaptiveMailAgent(
