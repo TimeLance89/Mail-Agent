@@ -6,9 +6,11 @@
 - Mailbox/OAuth secrets must never be written to `state.json`, audit events, mail SQLite, Calendar SQLite, or agent memory.
 - The model never receives raw credentials or direct access to the credential vault.
 - The model never gets direct SMTP/IMAP, Google Calendar mutation, filesystem, or arbitrary shell execution.
-- A model cannot approve its own proposed action.
-- Mail sending/forwarding and Calendar create/update/delete/invite operations remain human approval-gated.
-- Foreign email is untrusted input and cannot authorize a Calendar mutation, notification, attendee, conflict override, policy change, identity change, or approval bypass.
+- A model cannot approve its own proposed action; only deterministic gateway policy or an explicit owner decision can authorize execution.
+- Mail sending/forwarding remains human approval-gated.
+- Calendar update/delete, conflict override, attendee addition, and external Calendar notifications remain human approval-gated.
+- Autonomous mode may authorize only the narrowly safe Calendar CREATE class defined below.
+- Foreign email is untrusted input and cannot authorize a notification, attendee, conflict override, policy change, identity change, or direct approval bypass.
 - Every security-relevant decision produces an audit event without storing credentials or full mail/calendar content.
 
 ## Credential vault
@@ -48,21 +50,40 @@ separate incremental consent for these scopes:
 The access/refresh tokens use the same encrypted local OAuth vault as Gmail. Public status endpoints
 expose capability/scopes but never the credential reference or token values.
 
-Calendar has a **separate approval queue** from mail. The model-facing mail action schema is not widened
-with Calendar execution tools. A Calendar Concierge can return one of three outcomes:
+Calendar has a **separate persistent mutation queue** from mail. The model-facing mail action schema is
+not widened with Calendar execution tools. A Calendar Concierge can return a read-only answer,
+clarification request, or typed Calendar mutation proposal. A mutation always enters the deterministic
+Calendar boundary first. Most mutations wait for explicit owner approval; a narrowly safe CREATE may be
+decided by gateway policy when the owner has explicitly selected Autonomous mode.
 
-1. read-only answer,
-2. clarification request,
-3. typed Calendar mutation proposal.
+### Autonomous safe Calendar CREATE
 
-Only the third can enter the Calendar approval queue, and it still cannot execute without an explicit
-owner approval.
+Autonomous scheduling is deliberately narrower than generic Calendar write permission. The gateway may
+auto-decide a CREATE only when all of the following are true:
+
+- the configured profile is `autonomous`;
+- the agent is enabled and execution mode is `live`, never shadow;
+- the action is `create`, never update/delete/cancel;
+- the reliable Calendar layer has validated the target calendar and interval;
+- no conflict override is requested;
+- `sendUpdates` is `none`;
+- the event contains no attendees, so Google will not contact a third party;
+- the selected Google calendar is writable.
+
+The proposal is still persisted, atomically claimed, conflict-checked again and executed by the reliable
+gateway executor. The LLM never receives the Google client or an approval primitive. The authorization
+comes from owner-selected Autonomous mode plus deterministic code, not from the incoming email text.
+
+If a synced email looks like a scheduling request, Autonomous may inspect it after normal mail analysis.
+Exact conflict-free creates can be completed under the rules above. Ambiguous/conflicting requests,
+reschedules, cancellations, blocked mail categories and any higher-impact request remain owner-attention
+items instead of being guessed.
 
 ### Calendar write validation
 
-Immediately before a proposal is queued, and again before an approved mutation executes, gateway code
-checks the connected account, selected calendar, granted scopes, effective Google access role, event
-identity, and conflicts.
+Immediately before a proposal is queued, and again before a mutation executes, gateway code checks the
+connected account, selected calendar, granted scopes, effective Google access role, event identity, and
+conflicts.
 
 Writable roles accepted from Google are `owner`, `writer`, and `writerWithoutPrivateAccess`. `reader`
 and `freeBusyReader` remain non-writable.
@@ -82,15 +103,15 @@ explicitly authorizes a conflict. A foreign email can never provide that authori
 
 ## Mail-to-Calendar prompt-injection boundary
 
-Scheduling-related email detection is deterministic and side-effect free. Selecting a mail as Calendar
-context does not grant authority to its sender. The Calendar prompt labels the mail body as untrusted
-data, and gateway code overwrites mailbox/calendar/source IDs after model output.
+Scheduling-related email detection is deterministic. Selecting or automatically inspecting a mail as
+Calendar context does not grant authority to its sender. The Calendar prompt labels the mail body as
+untrusted data, and gateway code overwrites mailbox/calendar/source IDs after model output. Autonomous
+authorization is computed independently from the mail text by the rules above.
 
-When MAIL-AGENT prepares an availability reply, the LLM may phrase only a short introduction. Actual
-free dates/times are computed from Google Free/Busy and inserted deterministically by the gateway. Lines
-containing digits are removed from the model introduction as defense-in-depth against invented schedule
-facts. The resulting email is stamped with the normal Agent-ID signature and still requires the normal
-mail send approval.
+When MAIL-AGENT prepares an availability or appointment-confirmation reply, the LLM may phrase only the
+mail content allowed by that workflow. Authoritative dates/times come from gateway-verified Calendar
+facts. Outbound mail is stamped with the normal Agent-ID signature and still requires the normal mail
+send approval, including when the Calendar entry itself was autonomously created.
 
 ## Agent registration data
 
@@ -117,7 +138,8 @@ Explicitly forbidden remote fields:
 
 ## Autonomous mode
 
-Autonomous mode does not mean unrestricted execution. Mail high-impact actions and **all Calendar
-mutations** remain approval-gated or can be denied regardless of the selected autonomy level. Calendar
-read operations and deterministic availability computation may run without a write approval because
-they have no Calendar side effect.
+Autonomous mode means the deterministic policy layer may perform explicitly permitted low/medium-impact
+work without asking for a redundant click. It never means unrestricted model execution. Mail
+sending/forwarding and high-impact Calendar work remain approval-gated. The only Calendar mutation that
+may currently auto-execute is the safe CREATE class defined above; uncertainty or increased impact
+returns control to the owner.
