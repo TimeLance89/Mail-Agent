@@ -16,8 +16,8 @@ def test_attention_ui_and_routes_are_wired():
     main = (ROOT / "apps/gateway/mail_agent_gateway/main.py").read_text(encoding="utf-8")
     desktop = (ROOT / "apps/launcher/mail_agent_launcher/desktop_runtime.py").read_text(encoding="utf-8")
 
-    assert "/assets/attention-center.js?v=0.13.8" in index
-    assert "/assets/attention-center.css?v=0.13.8" in index
+    assert "/assets/attention-center.js?v=0.13.9" in index
+    assert "/assets/attention-center.css?v=0.13.9" in index
     assert "Handlungsbedarf" in js
     assert "/v1/attention?limit=200" in js
     assert "/v1/attention/resolve" in js
