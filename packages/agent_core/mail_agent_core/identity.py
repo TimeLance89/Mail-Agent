@@ -24,7 +24,7 @@ class AgentIdentity:
     public_key: str
     fingerprint: str
     created_at: str
-    app_version: str = "0.17.0"
+    app_version: str = "0.17.1"
 
 
 class IdentityManager:
@@ -94,7 +94,7 @@ class IdentityManager:
     def verify(*, public_key_b64: str, payload: bytes, signature_b64: str) -> bool:
         try:
             public = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key_b64))
-            public.verify(base64.b64decode(signature_b64), payload)
+            public.verify(base64.b64decode(signature_b64), payload, signature_b64)
             return True
         except (ValueError, TypeError):
             return False
