@@ -12,7 +12,7 @@ ROOT = Path(__file__).resolve().parents[1]
 def test_conversation_ui_adapter_is_loaded_and_has_undo():
     html=(ROOT/"apps/web/index.html").read_text(encoding="utf-8")
     source=(ROOT/"apps/web/conversation-intelligence-ui.js").read_text(encoding="utf-8")
-    assert "/assets/conversation-intelligence-ui.js?v=0.17.2" in html
+    assert "/assets/conversation-intelligence-ui.js?v=0.17.3" in html
     assert "/v1/actions/undo/" in source
     assert "Rückgängig" in source
     assert "cold_outreach" in source
