@@ -89,7 +89,7 @@ class AgentWorkQueue:
                   ON p.mailbox_id = m.mailbox_id
                  AND p.message_id = COALESCE(NULLIF(m.remote_id, ''), NULLIF(m.internet_message_id, ''), CAST(m.uid AS TEXT))
                 WHERE m.mailbox_id=?
-                  AND (p.status IS NULL OR p.status='error')
+                  AND (p.status IS NULL OR p.status IN ('error', 'running'))
                 """,
                 (mailbox_id,),
             ).fetchone()

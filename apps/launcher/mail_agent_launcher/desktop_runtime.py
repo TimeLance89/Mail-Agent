@@ -12,6 +12,7 @@ ALLOWED_DESKTOP_VIEWS = {
     "shadow",
     "system",
     "inbox",
+    "attention",
     "approvals",
     "drafts",
     "settings",

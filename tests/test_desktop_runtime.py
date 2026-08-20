@@ -10,6 +10,7 @@ from mail_agent_launcher.desktop_runtime import (
 
 def test_desktop_view_url_only_allows_known_views():
     assert desktop_view_url("http://127.0.0.1:8765", "approvals").endswith("/?view=approvals")
+    assert desktop_view_url("http://127.0.0.1:8765", "attention").endswith("/?view=attention")
     assert desktop_view_url("http://127.0.0.1:8765", "not-a-view").endswith("/?view=overview")
 
 
@@ -142,7 +143,7 @@ def test_priority_mail_notifications_are_baselined_deduplicated_and_privacy_safe
     }
     events = tracker.observe(approvals=[], drafts=[], health=updated)
     assert [(event.title, event.view) for event in events] == [
-        ("Dringende E-Mail erkannt", "inbox")
+        ("Dringende E-Mail erkannt", "attention")
     ]
     assert "secret@example.org" not in events[0].message
     assert "Do not expose this" not in events[0].message
@@ -188,7 +189,7 @@ def test_security_mail_only_escalates_when_reply_is_needed():
         },
     )
     assert [(event.title, event.view) for event in escalated] == [
-        ("Sicherheitsrelevante E-Mail erkannt", "inbox")
+        ("Sicherheitsrelevante E-Mail erkannt", "attention")
     ]
 
 
