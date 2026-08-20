@@ -2,31 +2,39 @@ from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
 from typing import Any
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import HTTPException
 
 from . import main_v16 as previous
-from .calendar_assistant import CalendarAssistant, CalendarAssistantRequest
-from .calendar_service import (
-    CalendarApprovalStore,
-    CalendarFreeBusyRequest,
-    CalendarProposalRequest,
-    CalendarService,
+from .calendar_concierge import (
+    CalendarConcierge,
+    CalendarConciergeRequest,
+    CalendarMailReplyRequest,
 )
+from .calendar_reliable import (
+    CalendarConflictError,
+    CalendarFreeSlotRequest,
+    ReliableCalendarApprovalStore,
+    ReliableCalendarProposalRequest,
+    ReliableCalendarService,
+)
+from .calendar_service import CalendarFreeBusyRequest
 from .schemas import ApprovalDecisionRequest, OAuthStartRequest
 
 APP_VERSION = "0.17.0"
 base = previous.base
 
 # 0.17 adds Calendar as a capability on top of the fully verified 0.16.1 runtime. The existing
-# policy engine, mail approval queue, action executor, identity and adaptive mail reasoning remain
-# authoritative and untouched.
+# mail policy engine, mail approval queue, action executor, identity and adaptive mail reasoning
+# remain authoritative and are not widened with Calendar actions.
 previous.APP_VERSION = APP_VERSION
 base.APP_VERSION = APP_VERSION
 base.app.version = APP_VERSION
 
-calendar_store = CalendarApprovalStore(base.settings.data_dir / "calendar.db")
-calendar_service = CalendarService(
+calendar_store = ReliableCalendarApprovalStore(base.settings.data_dir / "calendar.db")
+recovered_calendar_executions = calendar_store.recover_stale_executions()
+calendar_service = ReliableCalendarService(
     store=calendar_store,
     mailbox_lookup=base._mailbox_by_id,
     mailbox_supplier=base._configured_mailboxes,
@@ -35,12 +43,32 @@ calendar_service = CalendarService(
     google_client_secret=base.settings.google_client_secret,
     audit_log=base.audit_log,
 )
-calendar_assistant = CalendarAssistant(
+calendar_concierge = CalendarConcierge(
     calendar_service=calendar_service,
     model_router=previous.model_router,
     providers=base.providers,
     mail_store=base.mail_store,
+    state_store=base.state_store,
+    identity_manager=base.identity_manager,
+    policy_engine=base.policy_engine,
+    audit_log=base.audit_log,
 )
+
+
+def _calendar_http_error(exc: Exception, *, operation: str) -> HTTPException:
+    if isinstance(exc, KeyError):
+        return HTTPException(status_code=404, detail="Calendar account, event or source mail not found")
+    if isinstance(exc, CalendarConflictError):
+        summaries = ", ".join(str(item.get("summary") or item.get("id")) for item in exc.conflicts[:4])
+        return HTTPException(
+            status_code=409,
+            detail=f"Calendar conflict with existing event(s): {summaries or 'occupied time'}",
+        )
+    if isinstance(exc, (PermissionError, RuntimeError, ValueError)):
+        message = str(exc)
+        status = 502 if message.startswith("Approved calendar action could not be executed:") else 409
+        return HTTPException(status_code=status, detail=message)
+    return HTTPException(status_code=502, detail=f"{operation} failed: {exc}")
 
 
 async def _finish_google_oauth_v17(
@@ -60,7 +88,11 @@ async def _finish_google_oauth_v17(
     if error:
         message = error_description or error
         base.oauth_controller.fail(state=state, provider="google", error=message)
-        title = "Google-Kalender-Verbindung abgebrochen" if purpose == "calendar" else "Google-Anmeldung abgebrochen"
+        title = (
+            "Google-Kalender-Verbindung abgebrochen"
+            if purpose == "calendar"
+            else "Google-Anmeldung abgebrochen"
+        )
         return base.HTMLResponse(base._oauth_result_page(False, title, message))
     if not code:
         base.oauth_controller.fail(
@@ -68,7 +100,11 @@ async def _finish_google_oauth_v17(
             provider="google",
             error="Authorization code is missing",
         )
-        title = "Google Kalender konnte nicht verbunden werden" if purpose == "calendar" else "Google-Anmeldung fehlgeschlagen"
+        title = (
+            "Google Kalender konnte nicht verbunden werden"
+            if purpose == "calendar"
+            else "Google-Anmeldung fehlgeschlagen"
+        )
         return base.HTMLResponse(
             base._oauth_result_page(False, title, "Kein Autorisierungscode erhalten.")
         )
@@ -79,25 +115,34 @@ async def _finish_google_oauth_v17(
                 base._oauth_result_page(
                     True,
                     "Google Kalender ist verbunden",
-                    f"{result.get('email_address') or 'Das Google-Konto'} darf jetzt Termine lesen und nach Freigabe verwalten.",
+                    (
+                        f"{result.get('email_address') or 'Das Google-Konto'} darf jetzt "
+                        "Termine lesen und nach Freigabe verwalten."
+                    ),
                 )
             )
         return base.HTMLResponse(
             base._oauth_result_page(
                 True,
                 "Gmail ist verbunden",
-                f"{result.get('email_address') or 'Das Postfach'} wurde sicher mit MAIL-AGENT verbunden.",
+                (
+                    f"{result.get('email_address') or 'Das Postfach'} wurde sicher mit "
+                    "MAIL-AGENT verbunden."
+                ),
             )
         )
     except KeyError as exc:
         raise HTTPException(status_code=400, detail="OAuth session not found or expired") from exc
     except Exception as exc:
-        title = "Google Kalender konnte nicht verbunden werden" if purpose == "calendar" else "Google-Anmeldung fehlgeschlagen"
+        title = (
+            "Google Kalender konnte nicht verbunden werden"
+            if purpose == "calendar"
+            else "Google-Anmeldung fehlgeschlagen"
+        )
         return base.HTMLResponse(base._oauth_result_page(False, title, str(exc)), status_code=502)
 
 
-# Existing callback routes resolve this function from main.py's module globals at request time.
-# Replacing only the presentation wrapper keeps one callback URI for Gmail and Calendar upgrades.
+# Existing callback routes resolve this symbol from main.py module globals at request time.
 base._finish_google_oauth = _finish_google_oauth_v17
 
 
@@ -117,21 +162,28 @@ async def start_google_calendar_oauth(body: OAuthStartRequest) -> dict[str, Any]
 
 @base.app.get("/v1/calendar/status")
 async def calendar_status() -> dict[str, Any]:
-    return calendar_service.status()
+    status = calendar_service.status()
+    status["recovered_stale_executions"] = recovered_calendar_executions
+    status["features"] = [
+        "agenda",
+        "free_busy",
+        "free_slot_finder",
+        "assistant",
+        "mail_to_calendar",
+        "availability_reply_draft",
+        "approval_gated_mutations",
+        "optimistic_concurrency",
+        "idempotent_create_retry",
+    ]
+    return status
 
 
 @base.app.get("/v1/calendar/calendars")
 async def calendar_list(mailbox_id: str) -> dict[str, Any]:
     try:
         return {"calendars": await calendar_service.calendars(mailbox_id)}
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Unknown Google account") from exc
-    except PermissionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Google Calendar request failed: {exc}") from exc
+        raise _calendar_http_error(exc, operation="Google Calendar list") from exc
 
 
 @base.app.get("/v1/calendar/events")
@@ -154,12 +206,8 @@ async def calendar_events(
             time_max=upper,
             max_results=max_results,
         )
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Unknown Google account") from exc
-    except (PermissionError, RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Google Calendar request failed: {exc}") from exc
+        raise _calendar_http_error(exc, operation="Google Calendar events") from exc
     return {
         "calendar_id": calendar_id,
         "time_min": lower,
@@ -172,34 +220,97 @@ async def calendar_events(
 async def calendar_freebusy(body: CalendarFreeBusyRequest) -> dict[str, Any]:
     try:
         return await calendar_service.freebusy(body)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Unknown Google account") from exc
-    except (PermissionError, RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Google Calendar request failed: {exc}") from exc
+        raise _calendar_http_error(exc, operation="Google Calendar free/busy") from exc
+
+
+@base.app.post("/v1/calendar/free-slots")
+async def calendar_free_slots(body: CalendarFreeSlotRequest) -> dict[str, Any]:
+    try:
+        return await calendar_service.find_free_slots(body)
+    except Exception as exc:
+        raise _calendar_http_error(exc, operation="Calendar free-slot search") from exc
+
+
+@base.app.get("/v1/calendar/briefing")
+async def calendar_briefing(
+    mailbox_id: str,
+    calendar_id: str = "primary",
+    duration_minutes: int = 30,
+) -> dict[str, Any]:
+    duration_minutes = max(5, min(int(duration_minutes), 8 * 60))
+    try:
+        calendars = await calendar_service.calendars(mailbox_id)
+        if calendar_id == "primary":
+            meta = next((item for item in calendars if item.get("primary")), None)
+        else:
+            meta = next((item for item in calendars if str(item.get("id")) == calendar_id), None)
+        if meta is None:
+            raise ValueError("Requested calendar is not available")
+        zone_name = str(meta.get("time_zone") or "UTC")
+        try:
+            zone = ZoneInfo(zone_name)
+        except ZoneInfoNotFoundError:
+            zone = ZoneInfo("UTC")
+            zone_name = "UTC"
+        local_now = datetime.now(UTC).astimezone(zone)
+        day_start = local_now.replace(hour=0, minute=0, second=0, microsecond=0)
+        day_end = day_start + timedelta(days=1)
+        events = await calendar_service.events(
+            mailbox_id,
+            calendar_id=calendar_id,
+            time_min=max(local_now, day_start).isoformat(),
+            time_max=day_end.isoformat(),
+            max_results=100,
+        )
+        free = await calendar_service.find_free_slots(
+            CalendarFreeSlotRequest(
+                mailbox_id=mailbox_id,
+                calendar_ids=[calendar_id],
+                time_min=local_now.isoformat(),
+                time_max=(local_now + timedelta(days=7)).isoformat(),
+                duration_minutes=duration_minutes,
+                time_zone=zone_name,
+                max_results=5,
+            )
+        )
+        return {
+            "calendar_id": calendar_id,
+            "calendar_name": meta.get("summary"),
+            "time_zone": zone_name,
+            "local_now": local_now.isoformat(),
+            "today_events": events,
+            "today_count": len(events),
+            "next_event": events[0] if events else None,
+            "next_free_slots": free.get("slots", []),
+        }
+    except Exception as exc:
+        raise _calendar_http_error(exc, operation="Calendar briefing") from exc
 
 
 @base.app.post("/v1/calendar/assist")
-async def calendar_assist(body: CalendarAssistantRequest) -> dict[str, Any]:
+@base.app.post("/v1/calendar/concierge")
+async def calendar_assist(body: CalendarConciergeRequest) -> dict[str, Any]:
     try:
-        return await calendar_assistant.propose(body)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Calendar account or source message not found") from exc
-    except (PermissionError, RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return await calendar_concierge.assist(body)
     except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"Calendar assistant failed: {exc}") from exc
+        raise _calendar_http_error(exc, operation="Calendar assistant") from exc
+
+
+@base.app.post("/v1/calendar/mail-reply")
+async def calendar_mail_reply(body: CalendarMailReplyRequest) -> dict[str, Any]:
+    try:
+        return await calendar_concierge.draft_availability_reply(body)
+    except Exception as exc:
+        raise _calendar_http_error(exc, operation="Calendar availability reply") from exc
 
 
 @base.app.post("/v1/calendar/proposals")
-async def calendar_propose(body: CalendarProposalRequest) -> dict[str, Any]:
+async def calendar_propose(body: ReliableCalendarProposalRequest) -> dict[str, Any]:
     try:
-        return calendar_service.propose(body)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Unknown Google account") from exc
-    except (PermissionError, RuntimeError, ValueError) as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+        return await calendar_service.propose_checked(body)
+    except Exception as exc:
+        raise _calendar_http_error(exc, operation="Calendar proposal") from exc
 
 
 @base.app.get("/v1/calendar/approvals")
@@ -224,14 +335,16 @@ async def approve_calendar_action(
 ) -> dict[str, Any]:
     try:
         return await calendar_service.approve(approval_id, actor=body.actor)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Calendar approval not found") from exc
-    except PermissionError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
-    except RuntimeError as exc:
-        message = str(exc)
-        status = 502 if message.startswith("Approved calendar action could not be executed:") else 409
-        raise HTTPException(status_code=status, detail=message) from exc
+    except Exception as exc:
+        raise _calendar_http_error(exc, operation="Approved Calendar action") from exc
+
+
+@base.app.post("/v1/calendar/approvals/{approval_id}/execute")
+async def retry_calendar_action(approval_id: str) -> dict[str, Any]:
+    try:
+        return await calendar_service.execute(approval_id)
+    except Exception as exc:
+        raise _calendar_http_error(exc, operation="Calendar retry") from exc
 
 
 @base.app.post("/v1/calendar/approvals/{approval_id}/reject")
@@ -241,10 +354,8 @@ async def reject_calendar_action(
 ) -> dict[str, Any]:
     try:
         return calendar_service.reject(approval_id, actor=body.actor)
-    except KeyError as exc:
-        raise HTTPException(status_code=404, detail="Calendar approval not found") from exc
-    except RuntimeError as exc:
-        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise _calendar_http_error(exc, operation="Calendar rejection") from exc
 
 
 def _move_catch_all_web_mount_to_end() -> None:
