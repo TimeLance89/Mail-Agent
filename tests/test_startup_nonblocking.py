@@ -22,15 +22,18 @@ def test_static_startup_shell_is_present_before_javascript_boot():
 
 def test_startup_guard_runs_immediately_after_main_app():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
-    assert "/assets/startup-rescue.js?v=0.13.9" in index
-    assert index.index("/assets/app.js?v=0.13.9") < index.index(
-        "/assets/startup-rescue.js?v=0.13.9"
+    assert "/assets/startup-rescue.js?v=0.14.0" in index
+    assert index.index("/assets/app.js?v=0.14.0") < index.index(
+        "/assets/startup-rescue.js?v=0.14.0"
     )
-    assert index.index("/assets/startup-rescue.js?v=0.13.9") < index.index(
-        "/assets/mail-provider-setup.js?v=0.13.9"
+    assert index.index("/assets/startup-rescue.js?v=0.14.0") < index.index(
+        "/assets/workbench-ui.js?v=0.14.0"
     )
-    assert index.index("/assets/mail-provider-setup.js?v=0.13.9") < index.index(
-        "/assets/llm-model-settings-v2.js?v=0.13.9"
+    assert index.index("/assets/workbench-ui.js?v=0.14.0") < index.index(
+        "/assets/mail-provider-setup.js?v=0.14.0"
+    )
+    assert index.index("/assets/mail-provider-setup.js?v=0.14.0") < index.index(
+        "/assets/llm-model-settings-v2.js?v=0.14.0"
     )
 
 
@@ -46,10 +49,11 @@ def test_every_web_asset_is_cache_busted_for_the_hotfix():
         "mail-provider-setup.js",
         "llm-model-settings-v2.js",
         "dashboard-live.js",
-        "attention-center.js",
         "desktop-links.js",
+        "workbench.css",
+        "workbench-ui.js",
     ):
-        assert f"/assets/{asset}?v=0.13.9" in index
+        assert f"/assets/{asset}?v=0.14.0" in index
 
 
 def test_installed_dashboard_can_render_before_optional_provider_enrichment_finishes():

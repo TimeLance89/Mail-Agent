@@ -39,7 +39,7 @@ def test_restart_helper_requires_the_new_gateway_to_be_healthy():
 def test_inno_installer_passes_version_and_restart_mode_to_verifier():
     source = INSTALLER.read_text(encoding="utf-8")
 
-    assert '#define MyAppVersion "0.13.9"' in source
+    assert '#define MyAppVersion "0.14.0"' in source
     assert '""{#MyAppVersion}"" ""open-browser"""' in source
     assert '""{#MyAppVersion}"" ""no-browser"""' in source
     assert "postinstall skipifsilent" in source
@@ -47,7 +47,7 @@ def test_inno_installer_passes_version_and_restart_mode_to_verifier():
 
 
 class _HealthHandler(BaseHTTPRequestHandler):
-    version = "0.13.9"
+    version = "0.14.0"
 
     def do_GET(self):  # noqa: N802 - stdlib callback name
         if self.path != "/health":
@@ -79,7 +79,7 @@ def test_restart_helper_accepts_only_expected_healthy_version(tmp_path: Path):
     env["MAIL_AGENT_WEB_DIR"] = str(tmp_path / "stale-meipass" / "mail_agent_web")
 
     command_line = subprocess.list2cmdline(
-        [str(RESTART_HELPER), str(sys.executable), "0.13.9", "no-browser"]
+        [str(RESTART_HELPER), str(sys.executable), "0.14.0", "no-browser"]
     )
     try:
         result = subprocess.run(
@@ -98,6 +98,6 @@ def test_restart_helper_accepts_only_expected_healthy_version(tmp_path: Path):
     assert result.returncode == 0, result.stdout + result.stderr
     log = tmp_path / "local" / "Mail-Agent" / "logs" / "update-restart.log"
     assert log.exists()
-    assert "Gateway is reachable with expected version 0.13.9" in log.read_text(
+    assert "Gateway is reachable with expected version 0.14.0" in log.read_text(
         encoding="utf-8", errors="replace"
     )
