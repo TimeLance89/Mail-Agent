@@ -1,4 +1,4 @@
-/* MAIL-AGENT 0.16 · Owner Intelligence & Efficiency. No DOM MutationObserver by design. */
+/* MAIL-AGENT 0.16.1 · Owner Intelligence & Efficiency. No DOM MutationObserver by design. */
 (() => {
   const state = { status:null, usage:null, loading:false, lastUsageAt:0 };
   const roles = [
@@ -27,6 +27,7 @@
   function sourceBadge(source) {
     if (source==='provider_reported') return '<span class="ai16-badge good">Provider gemeldet</span>';
     if (source==='estimated') return '<span class="ai16-badge warn">geschätzt</span>';
+    if (source==='mixed') return '<span class="ai16-badge warn">gemischt</span>';
     return '<span class="ai16-badge">unbekannt</span>';
   }
 
@@ -49,19 +50,22 @@
 
   function routingHtml(status) {
     const routing=status?.model_routing||{mode:'automatic'};
-    return `<section class="ai16-surface"><div class="ai16-head"><div><h3>Modellstrategie</h3><p>Automatisch reduziert teure Aufrufe zuerst deterministisch, dann lokal und nutzt das konfigurierte Hauptmodell nur wenn nötig. Expertenmodus überschreibt einzelne Rollen.</p></div><span class="ai16-badge">${esc16(status?.configured_provider||'—')} · ${esc16(status?.configured_model||'default')}</span></div><div class="ai16-body"><div class="ai16-actions" style="margin-bottom:15px"><button class="ai16-btn ${routing.mode==='automatic'?'primary':''}" data-ai16-mode="automatic">Automatisch · empfohlen</button><button class="ai16-btn ${routing.mode==='expert'?'primary':''}" data-ai16-mode="expert">Expertenmodus</button></div><div class="ai16-routes">${roles.map(([key,label])=>{const ep=endpoint(routing,key);return `<div class="ai16-route"><label>${label}</label><select data-route-provider="${key}" ${routing.mode!=='expert'?'disabled':''}><option value="">Fallback</option><option value="ollama" ${ep?.provider==='ollama'?'selected':''}>Ollama</option><option value="codex" ${ep?.provider==='codex'?'selected':''}>Codex</option></select><input data-route-model="${key}" value="${esc16(ep?.model||'')}" placeholder="Fallback / Modellname" ${routing.mode!=='expert'?'disabled':''}></div>`}).join('')}</div><div class="ai16-actions" style="margin-top:15px"><button class="ai16-btn primary" id="ai16-routing-save">Strategie speichern</button></div></div></section>`;
+    return `<section class="ai16-surface"><div class="ai16-head"><div><h3>Modellstrategie</h3><p>Automatisch reduziert teure Aufrufe zuerst deterministisch, dann lokal und nutzt das konfigurierte Hauptmodell nur wenn nötig. Expertenmodus überschreibt einzelne Rollen. Nicht verifizierbare Expert-Modelle fallen sicher auf das Hauptmodell zurück.</p></div><span class="ai16-badge">${esc16(status?.configured_provider||'—')} · ${esc16(status?.configured_model||'default')}</span></div><div class="ai16-body"><div class="ai16-actions" style="margin-bottom:15px"><button class="ai16-btn ${routing.mode==='automatic'?'primary':''}" data-ai16-mode="automatic">Automatisch · empfohlen</button><button class="ai16-btn ${routing.mode==='expert'?'primary':''}" data-ai16-mode="expert">Expertenmodus</button></div><div class="ai16-routes">${roles.map(([key,label])=>{const ep=endpoint(routing,key);return `<div class="ai16-route"><label>${label}</label><select data-route-provider="${key}" ${routing.mode!=='expert'?'disabled':''}><option value="">Fallback</option><option value="ollama" ${ep?.provider==='ollama'?'selected':''}>Ollama</option><option value="codex" ${ep?.provider==='codex'?'selected':''}>Codex</option></select><input data-route-model="${key}" value="${esc16(ep?.model||'')}" placeholder="Fallback / Modellname" ${routing.mode!=='expert'?'disabled':''}></div>`}).join('')}</div><div class="ai16-actions" style="margin-top:15px"><button class="ai16-btn primary" id="ai16-routing-save">Strategie speichern</button></div></div></section>`;
   }
 
   function usageHtml(data) {
     if (!data) return `<section class="ai16-surface"><div class="ai16-body"><div class="ai16-empty">Usage-Daten werden geladen …</div></div></section>`;
-    const local=data.local||{}, today=data.today||{}, codex=data.codex||{};
+    const local=data.local||{}, today=data.today||{}, codex=data.codex||{}, account=codex.account_usage||{};
     const primary=codex.rate_limits?.primary, secondary=codex.rate_limits?.secondary;
     const lowest=[primary?.remaining_percent,secondary?.remaining_percent].filter(v=>Number.isFinite(Number(v))).sort((a,b)=>a-b)[0];
     const quotaClass=Number.isFinite(Number(lowest)) && Number(lowest)<=10?'danger':Number.isFinite(Number(lowest))&&Number(lowest)<=20?'warn':'good';
     const routes=Object.entries(local.routes||{}).sort((a,b)=>b[1]-a[1]);
     const tasks=Object.entries(local.tasks||{}).sort((a,b)=>b[1]-a[1]);
+    const providerTotal=account.totalTokens??account.total_tokens??account.totalTokenCount??account.usage?.totalTokens??null;
+    const tokenSource=local.prompt_tokens==null?'unknown':(local.token_coverage||'unknown');
     const windowRow=(name,w)=>w?`<div class="ai16-row"><b>${name}</b><code>${pct(w.used_percent)} genutzt · ${pct(w.remaining_percent)} verbleibend${w.window_duration_minutes?` · ${fmt(w.window_duration_minutes)} min Fenster`:''}${w.resets_at?` · Reset ${new Date(Number(w.resets_at)*1000).toLocaleString('de-DE')}`:''}</code>${sourceBadge(w.source)}</div>`:`<div class="ai16-row"><b>${name}</b><code>Vom installierten Codex-Client nicht gemeldet</code><span class="ai16-badge">unbekannt</span></div>`;
-    return `<div class="ai16-stack"><section class="ai16-surface"><div class="ai16-head"><div><h3>LLM-Verbrauch & Effizienz</h3><p>Provider-Werte, lokale Messung und Schätzungen werden strikt getrennt. MAIL-AGENT erzeugt keine Fantasie-Quota.</p></div><span class="ai16-badge ${quotaClass}">${Number.isFinite(Number(lowest))?`${pct(lowest)} kleinstes Restfenster`:'Quota unbekannt'}</span></div><div class="ai16-grid"><div class="ai16-metric"><small>Heute · LLM-Aufrufe</small><strong>${fmt(today.llm_calls)}</strong><span>${fmt(today.today_events)} Entscheidungen</span></div><div class="ai16-metric"><small>7 Tage · LLM-Aufrufe</small><strong>${fmt(local.llm_calls)}</strong><span>${fmt(local.decision_events)} Entscheidungen</span></div><div class="ai16-metric"><small>Codex vermieden</small><strong>${pct(local.codex_avoidance_percent)}</strong><span>${fmt(local.codex_calls_avoided)} Entscheidungen</span></div><div class="ai16-metric"><small>Ø Analysezeit</small><strong>${local.avg_duration_ms==null?'—':`${fmt(local.avg_duration_ms)} ms`}</strong><span>lokal gemessen</span></div></div><div class="ai16-body">${windowRow('Codex Primärfenster',primary)}${windowRow('Codex Sekundärfenster',secondary)}<div class="ai16-row"><b>Codex Usage RPC</b><code>${esc16(codex.detail||'Keine Details')}</code>${sourceBadge(codex.source)}</div><div class="ai16-row"><b>Tokens lokal</b><code>${local.prompt_tokens==null?'nicht verfügbar':`${fmt(local.prompt_tokens)} Prompt · ${fmt(local.completion_tokens)} Completion`}</code>${sourceBadge(local.prompt_tokens==null?'unknown':'estimated')}</div></div></section><section class="ai16-surface"><div class="ai16-head"><div><h3>Wo Aufrufe entstehen</h3><p>Nur Metadaten und Counts; keine Mailtexte, Betreffzeilen oder Absender im Usage-Log.</p></div><button class="ai16-btn" id="ai16-usage-refresh">Aktualisieren</button></div><div class="ai16-body"><table class="ai16-table"><thead><tr><th>Route</th><th>Entscheidungen</th></tr></thead><tbody>${routes.map(([k,v])=>`<tr><td>${esc16(k)}</td><td>${fmt(v)}</td></tr>`).join('')||'<tr><td colspan="2">Noch keine Daten</td></tr>'}</tbody></table><table class="ai16-table" style="margin-top:16px"><thead><tr><th>Aufgabenklasse</th><th>LLM-Aufrufe</th></tr></thead><tbody>${tasks.map(([k,v])=>`<tr><td>${esc16(k)}</td><td>${fmt(v)}</td></tr>`).join('')||'<tr><td colspan="2">Noch keine Daten</td></tr>'}</tbody></table></div></section></div>`;
+    const accountRow=providerTotal==null?`<div class="ai16-row"><b>Codex Tokens gesamt</b><code>Vom installierten Codex-Client nicht gemeldet</code><span class="ai16-badge">unbekannt</span></div>`:`<div class="ai16-row"><b>Codex Tokens gesamt</b><code>${fmt(providerTotal)}</code>${sourceBadge('provider_reported')}</div>`;
+    return `<div class="ai16-stack"><section class="ai16-surface"><div class="ai16-head"><div><h3>LLM-Verbrauch & Effizienz</h3><p>Provider-Werte, lokale Messung und Schätzungen werden strikt getrennt. MAIL-AGENT erzeugt keine Fantasie-Quota.</p></div><span class="ai16-badge ${quotaClass}">${Number.isFinite(Number(lowest))?`${pct(lowest)} kleinstes Restfenster`:'Quota unbekannt'}</span></div><div class="ai16-grid"><div class="ai16-metric"><small>Heute · LLM-Aufrufe</small><strong>${fmt(today.today_llm_calls??today.llm_calls)}</strong><span>${fmt(today.today_events)} Entscheidungen</span></div><div class="ai16-metric"><small>7 Tage · LLM-Aufrufe</small><strong>${fmt(local.llm_calls)}</strong><span>${fmt(local.decision_events)} Entscheidungen</span></div><div class="ai16-metric"><small>Codex vermieden</small><strong>${pct(local.codex_avoidance_percent)}</strong><span>${fmt(local.codex_calls_avoided)} Entscheidungen</span></div><div class="ai16-metric"><small>Ø Analysezeit</small><strong>${local.avg_duration_ms==null?'—':`${fmt(local.avg_duration_ms)} ms`}</strong><span>lokal gemessen</span></div></div><div class="ai16-body">${windowRow('Codex Primärfenster',primary)}${windowRow('Codex Sekundärfenster',secondary)}<div class="ai16-row"><b>Codex Usage RPC</b><code>${esc16(codex.detail||'Keine Details')}</code>${sourceBadge(codex.source)}</div>${accountRow}<div class="ai16-row"><b>Tokens lokal</b><code>${local.prompt_tokens==null?'nicht verfügbar':`${fmt(local.prompt_tokens)} Prompt · ${fmt(local.completion_tokens)} Completion`}</code>${sourceBadge(tokenSource)}</div></div></section><section class="ai16-surface"><div class="ai16-head"><div><h3>Wo Aufrufe entstehen</h3><p>Nur Metadaten und Counts; keine Mailtexte, Betreffzeilen oder Absender im Usage-Log.</p></div><button class="ai16-btn" id="ai16-usage-refresh">Aktualisieren</button></div><div class="ai16-body"><table class="ai16-table"><thead><tr><th>Route</th><th>Entscheidungen</th></tr></thead><tbody>${routes.map(([k,v])=>`<tr><td>${esc16(k)}</td><td>${fmt(v)}</td></tr>`).join('')||'<tr><td colspan="2">Noch keine Daten</td></tr>'}</tbody></table><table class="ai16-table" style="margin-top:16px"><thead><tr><th>Aufgabenklasse</th><th>LLM-Aufrufe</th></tr></thead><tbody>${tasks.map(([k,v])=>`<tr><td>${esc16(k)}</td><td>${fmt(v)}</td></tr>`).join('')||'<tr><td colspan="2">Noch keine Daten</td></tr>'}</tbody></table></div></section></div>`;
   }
 
   function onboardingBanner(profile) {
@@ -71,7 +75,7 @@
 
   function mount() {
     if (!installed || !state.status) return;
-    document.querySelectorAll('.wb-build').forEach(el=>el.textContent='0.16.0');
+    document.querySelectorAll('.wb-build').forEach(el=>el.textContent='0.16.1');
     const host=document.querySelector('.wb-content');
     if (!host) return;
     document.getElementById('ai16-mounted')?.remove();
@@ -97,10 +101,14 @@
   }
   function routingPayload(mode) {
     const routing={mode};
-    if (mode==='expert') roles.forEach(([role])=>{
-      const provider=document.querySelector(`[data-route-provider="${role}"]`)?.value||'';
-      const model=document.querySelector(`[data-route-model="${role}"]`)?.value?.trim()||'';
-      routing[role]=(provider&&model)?{provider,model}:null;
+    roles.forEach(([role])=>{
+      if (mode==='expert') {
+        const provider=document.querySelector(`[data-route-provider="${role}"]`)?.value||'';
+        const model=document.querySelector(`[data-route-model="${role}"]`)?.value?.trim()||'';
+        routing[role]=(provider&&model)?{provider,model}:null;
+      } else {
+        routing[role]=endpoint(state.status?.model_routing,role);
+      }
     });
     return routing;
   }
