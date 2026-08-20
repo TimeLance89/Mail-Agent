@@ -9,7 +9,31 @@ from mail_agent_core.providers import CompletionRequest
 from mail_agent_core.signature import stamp_outgoing_proposal
 
 from .calendar_concierge import CalendarConcierge, CalendarMailReplyRequest
-from .calendar_reliable import CalendarFreeSlotRequest
+from .calendar_reliable import CalendarFreeSlotRequest, ReliableCalendarService
+
+
+async def _google_role_compatible_writable_calendar(
+    self: ReliableCalendarService,
+    mailbox_id: str,
+    calendar_id: str,
+) -> dict[str, Any]:
+    """Honor all Google Calendar roles that can modify events.
+
+    Google exposes `writerWithoutPrivateAccess` for shared calendars. It can read/write
+    events while private event details stay hidden, so treating it as a read-only role
+    would incorrectly disable legitimate scheduling. Conflict checks still use Google's
+    authoritative event/free-busy responses and every mutation remains approval-gated.
+    """
+    meta = await self._calendar_meta(mailbox_id, calendar_id)  # noqa: SLF001
+    role = str(meta.get("access_role") or "").casefold()
+    if role not in {"owner", "writer", "writerwithoutprivateaccess"}:
+        raise PermissionError("The selected Google calendar is read-only")
+    return meta
+
+
+# 0.17 compatibility hardening: main_v17 imports this module before it instantiates the
+# ReliableCalendarService, so source and frozen runtimes share Google's current role semantics.
+ReliableCalendarService._ensure_writable_calendar = _google_role_compatible_writable_calendar  # type: ignore[method-assign]
 
 
 class ReliableCalendarConcierge(CalendarConcierge):
@@ -26,9 +50,15 @@ class ReliableCalendarConcierge(CalendarConcierge):
             start = datetime.fromisoformat(str(slot["start"]).replace("Z", "+00:00"))
             end = datetime.fromisoformat(str(slot["end"]).replace("Z", "+00:00"))
             if language == "en":
-                label = f"{start:%Y-%m-%d %H:%M}–{end:%H:%M} ({slot.get('time_zone') or 'local'})"
+                label = (
+                    f"{start:%Y-%m-%d %H:%M}–{end:%H:%M} "
+                    f"({slot.get('time_zone') or 'local'})"
+                )
             else:
-                label = f"{start:%d.%m.%Y %H:%M}–{end:%H:%M} ({slot.get('time_zone') or 'lokal'})"
+                label = (
+                    f"{start:%d.%m.%Y %H:%M}–{end:%H:%M} "
+                    f"({slot.get('time_zone') or 'lokal'})"
+                )
             lines.append(f"- {label}")
         return "\n".join(lines)
 
@@ -83,14 +113,26 @@ Follow the owner's language and tone. Return plain text only, one or two short s
             )
         ).strip()
         if not intro:
-            intro = "Here are a few times that work for me." if profile.language == "en" else "Gern – diese Zeiten passen bei mir."
+            intro = (
+                "Here are a few times that work for me."
+                if profile.language == "en"
+                else "Gern – diese Zeiten passen bei mir."
+            )
 
         # Strip lines containing digits as a defense against a model smuggling invented dates/times
         # into its prose. The authoritative slot block below is the only source of schedule facts.
-        safe_intro_lines = [line.strip() for line in intro.splitlines() if line.strip() and not any(ch.isdigit() for ch in line)]
+        safe_intro_lines = [
+            line.strip()
+            for line in intro.splitlines()
+            if line.strip() and not any(ch.isdigit() for ch in line)
+        ]
         safe_intro = " ".join(safe_intro_lines).strip()
         if not safe_intro:
-            safe_intro = "Here are a few times that work for me." if profile.language == "en" else "Gern – diese Zeiten passen bei mir."
+            safe_intro = (
+                "Here are a few times that work for me."
+                if profile.language == "en"
+                else "Gern – diese Zeiten passen bei mir."
+            )
         slot_lines = self._slot_lines(slots, language=profile.language)
         closing = (
             "Please let me know which option works best for you."
