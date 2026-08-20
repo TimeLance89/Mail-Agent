@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from . import main as launcher
 
-APP_VERSION = "0.16.0"
+APP_VERSION = "0.16.1"
 launcher.APP_VERSION = APP_VERSION
 
 # Keep the established launcher lifecycle intact. The adaptive gateway must not be imported at

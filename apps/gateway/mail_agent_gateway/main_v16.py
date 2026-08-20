@@ -9,33 +9,36 @@ from . import cloud_sync as cloud_sync_module
 from . import main as base
 from . import sync as sync_module
 from .adaptive_intelligence import (
-    AdaptiveMailAgent,
-    ModelRouter,
     ModelRoutingRequest,
     OwnerProfileConsentRequest,
     OwnerProfilePreviewRequest,
     OwnerProfileReview,
-    OwnerProfileStore,
     extract_rfc822_signals,
 )
 from .codex_usage_reader import CodexUsageReader
 from .decision_provenance import normalize_decision_path
-from .efficiency_store import EfficiencySignalStore
 from .oauth_runtime import current_google_access_token, current_microsoft_access_token
 from .owner_profile_learning import OwnerProfileService
+from .release_audit_fixes import (
+    ReleaseAdaptiveMailAgent,
+    ReleaseEfficiencySignalStore,
+    ReleaseModelRouter,
+    ReleaseOwnerProfileStore,
+    install_release_runtime_fixes,
+)
 
-APP_VERSION = "0.16.0"
+APP_VERSION = "0.16.1"
 
-# The existing composition root remains authoritative for security-sensitive services. 0.16 adds
+# The existing composition root remains authoritative for security-sensitive services. 0.16.x adds
 # a narrow adaptive layer and swaps only the MailAgent reasoning implementation. Policy, identity,
 # approval, executor, mailbox and queue ownership remain untouched.
 base.APP_VERSION = APP_VERSION
 base.app.version = APP_VERSION
 
-signal_store = EfficiencySignalStore(base.settings.data_dir / "adaptive-intelligence.db")
-owner_profile_store = OwnerProfileStore(base.settings.data_dir / "owner-profile.json")
-model_router = ModelRouter(base.state_store, base.providers)
-adaptive_mail_agent = AdaptiveMailAgent(
+signal_store = ReleaseEfficiencySignalStore(base.settings.data_dir / "adaptive-intelligence.db")
+owner_profile_store = ReleaseOwnerProfileStore(base.settings.data_dir / "owner-profile.json")
+model_router = ReleaseModelRouter(base.state_store, base.providers)
+adaptive_mail_agent = ReleaseAdaptiveMailAgent(
     policy_engine=base.policy_engine,
     state_store=base.state_store,
     providers=base.providers,
@@ -45,6 +48,7 @@ adaptive_mail_agent = AdaptiveMailAgent(
 )
 base.mail_agent = adaptive_mail_agent
 base.agent_runtime.mail_agent = adaptive_mail_agent
+install_release_runtime_fixes(base.agent_runtime)
 
 
 def _install_decision_path_provenance() -> None:
@@ -228,13 +232,25 @@ async def model_routing_status() -> dict[str, Any]:
 
 @base.app.put("/v1/settings/model-routing")
 async def model_routing_update(request: ModelRoutingRequest) -> dict[str, Any]:
-    model_router.save(request.routing)
+    routing = request.routing
+    if routing.mode == "automatic":
+        current = model_router.settings()
+        routing = routing.model_copy(
+            update={
+                role: getattr(routing, role) or getattr(current, role)
+                for role in ("classification", "normal", "complex", "draft", "owner_profile")
+            }
+        )
+    try:
+        model_router.save(routing)
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
     base.audit_log.append(
         "model_routing_updated",
         actor=request.actor,
-        details={"mode": request.routing.mode},
+        details={"mode": routing.mode},
     )
-    return request.routing.model_dump(mode="json")
+    return routing.model_dump(mode="json")
 
 
 @base.app.get("/v1/usage")
@@ -242,7 +258,7 @@ async def usage_summary(days: int = 7) -> dict[str, Any]:
     days = max(1, min(int(days), 3650))
     configuration = base.state_store.read().get("configuration") or {}
     codex_provider = base.providers.get("codex")
-    if isinstance(codex_provider, type(base.providers["codex"])):
+    if codex_provider is not None:
         codex = await CodexUsageReader(codex_provider).snapshot()
     else:
         codex = {
@@ -257,11 +273,12 @@ async def usage_summary(days: int = 7) -> dict[str, Any]:
         "configured_model": configuration.get("model"),
         "model_routing": model_router.settings().model_dump(mode="json"),
         "local": signal_store.summary(days=days),
-        "today": signal_store.summary(days=1),
+        "today": signal_store.calendar_day_summary(),
         "codex": codex,
         "semantics": {
             "provider_reported": "Vom Provider/CLI gemeldeter Wert",
             "estimated": "Lokal aus Textlänge geschätzter Tokenwert",
+            "mixed": "Enthält sowohl Provider-Messungen als auch lokale Schätzungen",
             "unknown": "Nicht zuverlässig verfügbar; MAIL-AGENT erfindet keinen Wert",
         },
     }
@@ -287,11 +304,9 @@ async def usage_privacy_contract() -> dict[str, Any]:
 def _move_catch_all_web_mount_to_end() -> None:
     """Keep APIs registered after the legacy composition root reachable.
 
-    The base gateway mounts StaticFiles at `/` after all 0.15 routes. 0.16 routes are intentionally
-    additive and are therefore registered later. Starlette matches routes in order, so the catch-all
-    web mount would otherwise intercept `/v1/adaptive/*` and return a static 404. Moving only the
-    named catch-all mount to the end preserves the existing web bundle while keeping all API routes
-    ahead of it.
+    The base gateway mounts StaticFiles at `/` after all legacy routes. 0.16.x routes are additive
+    and are therefore registered later. Starlette matches routes in order, so the catch-all web
+    mount must stay last or it intercepts `/v1/adaptive/*` with a static 404.
     """
 
     routes = base.app.router.routes

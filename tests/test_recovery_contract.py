@@ -50,9 +50,11 @@ def test_adaptive_gateway_loads_only_after_frozen_environment_is_authoritative()
     assert "MAIL_AGENT_WEB_DIR" in entry
 
 
-def test_release_version_is_synchronized_for_0160():
+def test_release_version_is_synchronized_for_0161():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
+    gateway_base = (ROOT / "apps/gateway/mail_agent_gateway/main.py").read_text(encoding="utf-8")
     gateway = (ROOT / "apps/gateway/mail_agent_gateway/main_v16.py").read_text(encoding="utf-8")
+    launcher_base = (ROOT / "apps/launcher/mail_agent_launcher/main.py").read_text(encoding="utf-8")
     launcher = (ROOT / "apps/launcher/mail_agent_launcher/v16_entry.py").read_text(encoding="utf-8")
     launcher_entry = (ROOT / "apps/launcher/mail_agent_launcher_entry.py").read_text(encoding="utf-8")
     identity = (ROOT / "packages/agent_core/mail_agent_core/identity.py").read_text(
@@ -63,18 +65,20 @@ def test_release_version_is_synchronized_for_0160():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
     workflow = (ROOT / ".github/workflows/build-installers.yml").read_text(encoding="utf-8")
 
-    assert 'version = "0.16.0"' in pyproject
+    assert 'version = "0.16.1"' in pyproject
     assert 'mail-agent = "mail_agent_launcher.v16_entry:main"' in pyproject
-    assert 'APP_VERSION = "0.16.0"' in gateway
-    assert 'APP_VERSION = "0.16.0"' in launcher
+    assert 'APP_VERSION = "0.16.1"' in gateway_base
+    assert 'APP_VERSION = "0.16.1"' in gateway
+    assert 'APP_VERSION = "0.16.1"' in launcher_base
+    assert 'APP_VERSION = "0.16.1"' in launcher
     assert "from mail_agent_launcher.v16_entry import main" in launcher_entry
-    assert 'app_version: str = "0.16.0"' in identity
-    assert '#define MyAppVersion "0.16.0"' in installer
-    assert "const APP_VERSION = '0.16.0'" in desktop
-    assert "/assets/startup-rescue.js?v=0.16.0" in index
-    assert "/assets/desktop-links.js?v=0.16.0" in index
-    assert "/assets/mail-provider-setup.js?v=0.16.0" in index
-    assert "/assets/adaptive-intelligence-ui.js?v=0.16.0" in index
+    assert 'app_version: str = "0.16.1"' in identity
+    assert '#define MyAppVersion "0.16.1"' in installer
+    assert "const APP_VERSION = '0.16.1'" in desktop
+    assert "/assets/startup-rescue.js?v=0.16.1" in index
+    assert "/assets/desktop-links.js?v=0.16.1" in index
+    assert "/assets/mail-provider-setup.js?v=0.16.1" in index
+    assert "/assets/adaptive-intelligence-ui.js?v=0.16.1" in index
     assert '"apps/gateway/mail_agent_gateway/main.py"' in workflow
     assert '"apps/launcher/mail_agent_launcher/main.py"' in workflow
     assert "Could not synchronize APP_VERSION" in workflow
