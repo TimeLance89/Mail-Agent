@@ -36,14 +36,19 @@ def test_overlapping_cycles_can_claim_a_message_only_once(tmp_path: Path):
         barrier.wait()
         results.append(len(queue.list_pending("mb-1", 1)))
 
-    threads = [threading.Thread(target=worker, args=(queue_a,)), threading.Thread(target=worker, args=(queue_b,))]
+    threads = [
+        threading.Thread(target=worker, args=(queue_a,)),
+        threading.Thread(target=worker, args=(queue_b,)),
+    ]
     for thread in threads:
         thread.start()
     for thread in threads:
         thread.join(timeout=5)
 
     assert sorted(results) == [0, 1]
-    assert queue_a.pending_count("mb-1") == 0
+    # A running claim is unfinished work and remains part of the backlog, but the second cycle
+    # cannot claim it again.
+    assert queue_a.pending_count("mb-1") == 1
 
 
 def test_error_and_stale_running_claims_are_retryable(tmp_path: Path):
