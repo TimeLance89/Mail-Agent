@@ -1,44 +1,91 @@
 # MAIL-AGENT
 
-MAIL-AGENT is a local-first AI agent deliberately restricted to email workflows.
-It is not a general-purpose shell or browser agent: models can only propose structured mail actions,
-and the local gateway decides whether those actions are allowed, require human approval, or are denied.
+MAIL-AGENT is a local-first AI assistant for email workflows with an optional, separately permissioned
+Google Calendar scheduling capability. It is not a general-purpose shell or browser agent: models
+produce typed proposals and the local gateway decides whether an action is read-only, requires human
+approval, or is denied.
 
-## v0.2 mailbox runtime
+## Current preview: v0.17.0
 
 - Local FastAPI gateway on port `8765`
 - Separate public-identity registry service on port `8770`
 - Mandatory Ed25519 installation identity bound to an owner
-- AES-256-GCM encrypted local credential vault for mailbox secrets
-- Background IMAP sync using stable UIDs and `BODY.PEEK[]`
-- Local SQLite inbox, thread index, sync cursor, and approval queue
+- AES-256-GCM encrypted local credential vault for mailbox/OAuth secrets
+- Gmail API, Microsoft Graph, and IMAP/SMTP mailbox paths
 - Provider abstraction with Ollama and Codex CLI adapters
-- Observer, Assistant, Copilot, and Autonomous policy modes
-- Dependency-free local onboarding and post-onboarding Control Center
-- Manual sync, local inbox preview, and approval/rejection UI
-- Structured mail-analysis core with code-level policy enforcement
-- Local append-only audit event log
+- Observer, Assistant, Copilot, and Autonomous mail-policy modes
+- Persistent mail drafts, approvals, audit traces, conversation state, and owner-controlled learning
+- Incremental Google Calendar OAuth capability on Google mailboxes
+- Calendar list, agenda, events, Free/Busy, daily briefing, and deterministic free-slot search
+- Calendar Concierge for read-only questions, clarification, and typed scheduling proposals
+- Mail-to-Calendar scheduling hints and availability-reply drafts
+- Separate approval-gated Calendar create/update/delete/invite execution
+- Calendar conflict re-checks, ETag stale-event protection, and idempotent create retries
+- Windows installer plus standalone Windows/Linux/macOS builds
 
 ## Security model
 
-The LLM never receives direct SMTP, IMAP, filesystem, credential-vault, or shell capabilities.
-It produces a typed `MailActionProposal`; only the gateway can evaluate and later execute an action.
-High-impact actions such as sending, forwarding, and deletion remain human approval-gated in v0.2.
+The LLM never receives direct SMTP, IMAP, Google Calendar, filesystem, credential-vault, or arbitrary
+shell capabilities. Mail reasoning produces typed `MailActionProposal` values. Calendar reasoning can
+only produce typed Calendar proposals or read-only answers. Gateway code remains the enforcement
+point for both domains.
 
-Mailbox passwords are encrypted at rest using AES-256-GCM and are not written to `state.json` or the
-mail SQLite database. The vault master key is kept in a separate permission-restricted local file.
-The vault master key is wrapped by the available OS credential facility where supported, with a
-permission-restricted local fallback for environments without a native secret store.
+Sending and forwarding mail remain human approval-gated. Calendar create/update/delete operations and
+attendee notifications are also always human approval-gated, including in autonomous mode. Incoming
+mail is untrusted scheduling context: it can contribute factual context but cannot authorize a Calendar
+mutation, invite an attendee, enable notifications, bypass approval, change policy, or modify identity.
 
-The agent's private Ed25519 key is generated locally and never sent to the registry. Only the public
-key, fingerprint, owner, and installation metadata are registered remotely.
+Mailbox passwords and OAuth refresh tokens are encrypted at rest and are not written to `state.json`,
+the mail database, the Calendar approval database, or model-visible memory. See
+[`docs/SECURITY.md`](docs/SECURITY.md) for the detailed boundaries.
+
+## Google Calendar in 0.17
+
+A user with a connected Google mailbox can choose **Google Kalender verbinden**. MAIL-AGENT performs an
+incremental OAuth grant and requests the Calendar permissions it actually needs:
+
+- `calendar.events` — read/edit event data
+- `calendar.calendarlist.readonly` — list the user's calendars and access roles
+- `calendar.freebusy` — query availability
+
+Existing Gmail authorization remains a separate capability. Tokens continue to use the local encrypted
+OAuth vault.
+
+After Calendar is connected, the **Kalender** work area can:
+
+- show today's and upcoming appointments,
+- answer read-only questions about the schedule,
+- find real free 30/60/90-minute windows from Google Free/Busy,
+- prepare a new appointment,
+- prepare a move or cancellation of an existing appointment,
+- add owner-authorized attendees and Google invitations,
+- detect likely scheduling requests in synced email without taking action,
+- use a selected email as untrusted scheduling context,
+- prepare a signed email reply containing only gateway-verified free slots.
+
+The assistant asks for clarification instead of guessing missing dates/times. A model-selected event ID
+must exist in the gateway-supplied calendar context. Calendar writes are checked for access role and
+conflicts when proposed and again immediately before execution.
+
+## Calendar reliability contract
+
+Calendar mutations use a dedicated persistent approval queue. They do not extend the model-controlled
+mail action schema.
+
+- create: deterministic Google event ID prevents duplicate appointments after a lost response/retry;
+- update: the original event ETag is frozen with the proposal and revalidated before execution;
+- delete: missing-after-retry is reconciled as already deleted, while changed events require refresh;
+- crash recovery: interrupted Calendar executions become explicit safe-retry states;
+- conflicts: existing opaque/busy events block scheduling unless the owner explicitly overrides;
+- shared calendars: Google `owner`, `writer`, and `writerWithoutPrivateAccess` roles are writable;
+  `reader` and `freeBusyReader` remain non-writable.
 
 ## Installation for normal users
 
-**Windows:** download `Mail-Agent-Setup.exe`, double-click it, install, and launch MAIL-AGENT from
-the Start menu. No Python, terminal, Git, Docker, or manual port configuration is required.
+**Windows:** download `Mail-Agent-Setup.exe`, double-click it, install, and launch MAIL-AGENT from the
+Start menu. No Python, terminal, Git, Docker, or manual port configuration is required.
 
-The desktop launcher starts the local services and opens the onboarding automatically. See
+The desktop launcher starts the local services and opens onboarding automatically. See
 [`docs/INSTALLATION.md`](docs/INSTALLATION.md) for distribution details.
 
 ## Development
@@ -49,7 +96,7 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e '.[dev]'
 
 uvicorn mail_agent_registry.main:app --app-dir apps/registry --port 8770 --reload
-uvicorn mail_agent_gateway.main:app --app-dir apps/gateway --port 8765 --reload
+uvicorn mail_agent_gateway.main_v17:app --app-dir apps/gateway --port 8765 --reload
 ```
 
 Open `http://127.0.0.1:8765`. The UI has no Node/npm runtime dependency.
@@ -69,8 +116,8 @@ The onboarding UI probes the instance and lists installed models.
 
 ### Codex / ChatGPT sign-in
 
-The Codex adapter does not scrape ChatGPT sessions and does not request raw browser cookies.
-It delegates authentication to a locally installed Codex CLI and its own ChatGPT sign-in state.
+The Codex adapter does not scrape ChatGPT sessions and does not request raw browser cookies. It
+delegates authentication to a locally installed Codex CLI and its own ChatGPT sign-in state.
 
 ## Local data layout
 
@@ -79,51 +126,56 @@ Inside `MAIL_AGENT_DATA_DIR` the gateway maintains:
 ```text
 identity/           Ed25519 installation identity
 state.json          non-secret configuration
-mail.db             local inbox, thread/sync index, approval queue
+mail.db             local inbox, drafts and mail approval queue
+calendar.db         Calendar mutation approval/recovery queue
+conversations.db    local conversation/sender-pattern state
 audit.jsonl         append-only local audit events
-secrets.vault       AES-GCM encrypted mailbox secrets
+secrets.vault       AES-GCM encrypted mailbox/OAuth secrets
 vault.key           local vault master key (permission restricted)
 ```
 
-No mailbox password is stored in `state.json` or `mail.db`.
+No mailbox password or OAuth refresh token is stored in `state.json`, `mail.db`, or `calendar.db`.
 
 ## Repository layout
 
 ```text
 apps/
-  gateway/        local control plane, vault, sync, storage and API
+  gateway/        local control plane, vault, mail + Calendar services and APIs
   registry/       owner/agent public identity registry
-  web/            onboarding and Control Center UI
+  web/            onboarding and desktop workbench UI
 packages/
   agent_core/     identity, policy, model contracts and provider interfaces
 connectors/
   imap/           IMAP/SMTP primitives
+  google/         Gmail + Google Calendar OAuth/API primitives
+  microsoft/      Microsoft Graph mail primitives
 docs/
   ARCHITECTURE.md
   SECURITY.md
-  ROADMAP.md
+  INSTALLATION.md
 ```
 
-## v0.2 API highlights
+## 0.17 API highlights
 
-- `POST /v1/mailboxes/probe` — validate mailbox and vault its password
-- `GET /v1/mailboxes` — safe mailbox metadata + sync status
-- `POST /v1/sync/run` — manual IMAP UID sync
-- `GET /v1/mailboxes/{id}/messages` — local inbox
-- `GET /v1/drafts` — locally persisted model-generated drafts
-- `GET /v1/approvals` — persistent human approval queue
-- `POST /v1/approvals/{id}/approve` / `reject` — human decision boundary
-- `POST /v1/agent/analyze` — model proposal + policy evaluation + automatic approval enqueue
-
-## Next v0.2.x work
-
-Gmail OAuth is integrated through the Gmail API. Microsoft 365/Outlook OAuth is the next connector
-layer. The local encrypted vault, mail store, sync service, and approval queue remain connector-neutral.
+- `POST /v1/oauth/google/calendar/start` — incremental Google Calendar OAuth
+- `GET /v1/calendar/status` — Calendar capabilities without exposing credentials
+- `GET /v1/calendar/calendars` / `events` — safe calendar/event reads
+- `POST /v1/calendar/freebusy` — raw Google availability query
+- `POST /v1/calendar/free-slots` — deterministic work-hour slot finder
+- `GET /v1/calendar/briefing` — today + upcoming free-slot briefing
+- `GET /v1/calendar/mail-suggestions` — side-effect-free scheduling hints from local mail
+- `POST /v1/calendar/concierge` — answer, clarify, or enqueue one typed Calendar proposal
+- `POST /v1/calendar/mail-reply` — signed draft with gateway-rendered verified free slots
+- `GET /v1/calendar/approvals` — separate Calendar approval queue
+- `POST /v1/calendar/approvals/{id}/approve` / `reject` — human Calendar decision boundary
 
 ## Desktop experience
 
-MAIL-AGENT is designed as a background desktop agent, not a terminal service. The Windows build starts the local gateway and registry, opens the UI, and remains available through a system-tray icon. From the tray the user can reopen MAIL-AGENT, check for updates, or stop the agent cleanly.
+MAIL-AGENT is designed as a background desktop agent, not a terminal service. The Windows build starts
+local services, opens the UI, and remains available through a system-tray icon. The workbench combines
+mail triage, drafts, approvals, activity, settings, and the optional Calendar planning area while
+preserving separate action/approval boundaries underneath.
 
-Gmail onboarding is intentionally one-click for end users: **Mit Google anmelden** opens the system browser, Google handles account selection and consent, and the browser returns to MAIL-AGENT automatically. OAuth client registration is a publisher/build concern and is never exposed as an end-user form.
-
-Installed builds update from a release feed rather than requiring Git or a source checkout. When a newer Windows installer is available, MAIL-AGENT can download it, launch the installer, shut down its local services, and restart through the installer flow. Private development feeds may require an authenticated/public distribution endpoint; production users are never expected to configure GitHub credentials.
+Installed builds update from the preview release feed rather than requiring Git or a source checkout.
+Updates replace program files while preserving local identity, encrypted credentials, settings, and
+local databases.

@@ -1,7 +1,8 @@
 (() => {
-  const APP_VERSION = '0.16.1';
+  const APP_VERSION = '0.17.0';
   const allowed = new Set([
     'overview',
+    'calendar',
     'activity',
     'shadow',
     'system',
@@ -29,6 +30,9 @@
     const footer = document.querySelector('.setup-foot');
     const text = `MAIL-AGENT v${APP_VERSION} · Lokales Gateway`;
     if (footer && footer.textContent !== text) footer.textContent = text;
+    document.querySelectorAll('.wb-build').forEach(node => {
+      if (node.textContent !== APP_VERSION) node.textContent = APP_VERSION;
+    });
   };
 
   const apply = () => {

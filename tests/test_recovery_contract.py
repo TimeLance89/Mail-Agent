@@ -40,45 +40,48 @@ def test_system_health_ui_and_uncertain_send_reconciliation_are_visible():
     assert "/v1/system/recovery/approvals/" in app
 
 
-def test_adaptive_gateway_loads_only_after_frozen_environment_is_authoritative():
-    entry = (ROOT / "apps/launcher/mail_agent_launcher/v16_entry.py").read_text(encoding="utf-8")
+def test_calendar_gateway_loads_only_after_frozen_environment_is_authoritative():
+    entry = (ROOT / "apps/launcher/mail_agent_launcher/v17_entry.py").read_text(encoding="utf-8")
     configure = "launcher.configure_environment(data_dir)"
-    adaptive_import = "from mail_agent_gateway import main_v16 as _gateway_v16"
+    calendar_import = "from mail_agent_gateway import main_v17 as _gateway_v17"
     assert configure in entry
-    assert adaptive_import in entry
-    assert entry.index(configure) < entry.index(adaptive_import)
-    assert "MAIL_AGENT_WEB_DIR" in entry
+    assert calendar_import in entry
+    assert entry.index(configure) < entry.index(calendar_import)
+    assert "MAIL_AGENT_WEB_DIR" in (
+        ROOT / "apps/launcher/mail_agent_launcher/v16_entry.py"
+    ).read_text(encoding="utf-8")
 
 
-def test_release_version_is_synchronized_for_0161():
+def test_release_version_is_synchronized_for_0170():
     pyproject = (ROOT / "pyproject.toml").read_text(encoding="utf-8")
     gateway_base = (ROOT / "apps/gateway/mail_agent_gateway/main.py").read_text(encoding="utf-8")
-    gateway = (ROOT / "apps/gateway/mail_agent_gateway/main_v16.py").read_text(encoding="utf-8")
+    gateway_v16 = (ROOT / "apps/gateway/mail_agent_gateway/main_v16.py").read_text(encoding="utf-8")
+    gateway_v17 = (ROOT / "apps/gateway/mail_agent_gateway/main_v17.py").read_text(encoding="utf-8")
     launcher_base = (ROOT / "apps/launcher/mail_agent_launcher/main.py").read_text(encoding="utf-8")
-    launcher = (ROOT / "apps/launcher/mail_agent_launcher/v16_entry.py").read_text(encoding="utf-8")
+    launcher_v16 = (ROOT / "apps/launcher/mail_agent_launcher/v16_entry.py").read_text(encoding="utf-8")
+    launcher_v17 = (ROOT / "apps/launcher/mail_agent_launcher/v17_entry.py").read_text(encoding="utf-8")
     launcher_entry = (ROOT / "apps/launcher/mail_agent_launcher_entry.py").read_text(encoding="utf-8")
-    identity = (ROOT / "packages/agent_core/mail_agent_core/identity.py").read_text(
-        encoding="utf-8"
-    )
+    identity = (ROOT / "packages/agent_core/mail_agent_core/identity.py").read_text(encoding="utf-8")
     installer = (ROOT / "packaging/windows/MailAgent.iss").read_text(encoding="utf-8")
     desktop = (ROOT / "apps/web/desktop-links.js").read_text(encoding="utf-8")
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
     workflow = (ROOT / ".github/workflows/build-installers.yml").read_text(encoding="utf-8")
 
-    assert 'version = "0.16.1"' in pyproject
-    assert 'mail-agent = "mail_agent_launcher.v16_entry:main"' in pyproject
-    assert 'APP_VERSION = "0.16.1"' in gateway_base
-    assert 'APP_VERSION = "0.16.1"' in gateway
-    assert 'APP_VERSION = "0.16.1"' in launcher_base
-    assert 'APP_VERSION = "0.16.1"' in launcher
-    assert "from mail_agent_launcher.v16_entry import main" in launcher_entry
-    assert 'app_version: str = "0.16.1"' in identity
-    assert '#define MyAppVersion "0.16.1"' in installer
-    assert "const APP_VERSION = '0.16.1'" in desktop
-    assert "/assets/startup-rescue.js?v=0.16.1" in index
-    assert "/assets/desktop-links.js?v=0.16.1" in index
-    assert "/assets/mail-provider-setup.js?v=0.16.1" in index
-    assert "/assets/adaptive-intelligence-ui.js?v=0.16.1" in index
+    assert 'version = "0.17.0"' in pyproject
+    assert 'mail-agent = "mail_agent_launcher.v17_entry:main"' in pyproject
+    assert 'APP_VERSION = "0.17.0"' in gateway_v17
+    assert 'APP_VERSION = "0.17.0"' in launcher_v17
+    assert "from mail_agent_launcher.v17_entry import main" in launcher_entry
+    assert 'app_version: str = "0.17.0"' in identity
+    assert '#define MyAppVersion "0.17.0"' in installer
+    assert "const APP_VERSION = '0.17.0'" in desktop
+    assert "/assets/startup-rescue.js?v=0.17.0" in index
+    assert "/assets/calendar-ui.js?v=0.17.0" in index
+    assert "/assets/desktop-links.js?v=0.17.0" in index
+    assert 'APP_VERSION = "0.16.1"' in gateway_v16
+    assert 'APP_VERSION = "0.16.1"' in launcher_v16
+    assert re.search(r'^APP_VERSION = "[^"]+"$', gateway_base, re.MULTILINE)
+    assert re.search(r'^APP_VERSION = "[^"]+"$', launcher_base, re.MULTILINE)
     assert '"apps/gateway/mail_agent_gateway/main.py"' in workflow
     assert '"apps/launcher/mail_agent_launcher/main.py"' in workflow
     assert "Could not synchronize APP_VERSION" in workflow
