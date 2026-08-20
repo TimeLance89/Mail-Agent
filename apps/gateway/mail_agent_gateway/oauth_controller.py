@@ -3,8 +3,14 @@ from __future__ import annotations
 import hashlib
 from dataclasses import dataclass
 
-from mail_agent_google import GoogleGmailClient, GoogleOAuthClient
-from mail_agent_google.client import make_pkce_pair as google_pkce
+from mail_agent_google import (
+    CALENDAR_EVENTS_SCOPE,
+    GOOGLE_CALENDAR_SCOPES,
+    GoogleCalendarOAuthClient,
+    GoogleGmailClient,
+    GoogleOAuthClient,
+)
+from mail_agent_google.client import GMAIL_SCOPE, make_pkce_pair as google_pkce
 from mail_agent_microsoft import MicrosoftGraphClient, MicrosoftOAuthClient
 from mail_agent_microsoft.client import make_pkce_pair as microsoft_pkce
 
@@ -20,6 +26,20 @@ class OAuthStartResult:
     provider: str
     state: str
     authorization_url: str
+
+
+def _scope_set(value: str | None) -> set[str]:
+    return {item.strip() for item in str(value or "").replace(",", " ").split() if item.strip()}
+
+
+def google_capabilities(scope: str | None) -> list[str]:
+    scopes = _scope_set(scope)
+    capabilities: list[str] = []
+    if GMAIL_SCOPE in scopes:
+        capabilities.append("mail")
+    if CALENDAR_EVENTS_SCOPE in scopes:
+        capabilities.append("calendar")
+    return capabilities
 
 
 class OAuthController:
@@ -45,6 +65,12 @@ class OAuthController:
                 "configured": bool(self.settings.google_client_id),
                 "redirect_uri": self.settings.google_redirect_uri,
                 "scope": "gmail.modify",
+                "calendar_scopes": [
+                    "calendar.events",
+                    "calendar.calendarlist.readonly",
+                    "calendar.freebusy",
+                ],
+                "calendar_supported": True,
             },
             "microsoft": {
                 "configured": bool(self.settings.microsoft_client_id),
@@ -63,6 +89,7 @@ class OAuthController:
             code_verifier=verifier,
             redirect_uri=self.settings.google_redirect_uri,
             login_hint=login_hint,
+            purpose="mail",
         )
         client = GoogleOAuthClient(self.settings.google_client_id, self.settings.google_client_secret)
         url = client.authorization_url(
@@ -73,7 +100,34 @@ class OAuthController:
         )
         self.audit_log.append(
             "oauth_started",
-            details={"provider": "google", "state": session.state},
+            details={"provider": "google", "purpose": "mail", "state": session.state},
+        )
+        return OAuthStartResult("google", session.state, url)
+
+    def start_google_calendar(self, login_hint: str | None = None) -> OAuthStartResult:
+        if not self.settings.google_client_id:
+            raise RuntimeError("Google OAuth client ID is not configured")
+        verifier, challenge = google_pkce()
+        session = self.sessions.create(
+            provider="google",
+            code_verifier=verifier,
+            redirect_uri=self.settings.google_redirect_uri,
+            login_hint=login_hint,
+            purpose="calendar",
+        )
+        client = GoogleCalendarOAuthClient(
+            self.settings.google_client_id,
+            self.settings.google_client_secret,
+        )
+        url = client.authorization_url(
+            redirect_uri=session.redirect_uri,
+            state=session.state,
+            code_challenge=challenge,
+            login_hint=login_hint,
+        )
+        self.audit_log.append(
+            "oauth_started",
+            details={"provider": "google", "purpose": "calendar", "state": session.state},
         )
         return OAuthStartResult("google", session.state, url)
 
@@ -86,6 +140,7 @@ class OAuthController:
             code_verifier=verifier,
             redirect_uri=self.settings.microsoft_redirect_uri,
             login_hint=login_hint,
+            purpose="mail",
         )
         client = MicrosoftOAuthClient(
             self.settings.microsoft_client_id,
@@ -99,7 +154,7 @@ class OAuthController:
         )
         self.audit_log.append(
             "oauth_started",
-            details={"provider": "microsoft", "state": session.state},
+            details={"provider": "microsoft", "purpose": "mail", "state": session.state},
         )
         return OAuthStartResult("microsoft", session.state, url)
 
@@ -118,13 +173,21 @@ class OAuthController:
                 code_verifier=session.code_verifier,
             )
             if not tokens.refresh_token:
-                raise RuntimeError("Google did not issue a refresh token; reconnect the mailbox")
+                raise RuntimeError("Google did not issue a refresh token; reconnect the account")
+            scopes = _scope_set(tokens.scope)
+            if session.purpose == "calendar":
+                missing = [scope for scope in GOOGLE_CALENDAR_SCOPES if scope not in scopes]
+                if missing:
+                    raise RuntimeError(
+                        "Google Calendar permission was not fully granted; reconnect Calendar"
+                    )
             profile = await GoogleGmailClient(tokens.access_token).profile()
             email = profile.get("emailAddress")
             if not email:
                 raise RuntimeError("Google did not return a mailbox address")
             mailbox_id = _mailbox_id("google", email)
             credential_ref = self.tokens.save_google(mailbox_id, tokens)
+            capabilities = google_capabilities(tokens.scope)
             self.mailboxes.upsert(
                 {
                     "mailbox_id": mailbox_id,
@@ -135,6 +198,8 @@ class OAuthController:
                     "credential_ref": credential_ref,
                     "credential_state": "encrypted-oauth-vault",
                     "scope": tokens.scope,
+                    "capabilities": capabilities,
+                    "calendar_enabled": "calendar" in capabilities,
                 }
             )
             self.sessions.update(
@@ -147,8 +212,10 @@ class OAuthController:
                 "oauth_connected",
                 details={
                     "provider": "google",
+                    "purpose": session.purpose,
                     "mailbox_id": mailbox_id,
                     "email_address": email,
+                    "capabilities": capabilities,
                 },
             )
             return self.sessions.get(state).public()
@@ -156,7 +223,7 @@ class OAuthController:
             self.sessions.update(state, status="error", error=str(exc))
             self.audit_log.append(
                 "oauth_failed",
-                details={"provider": "google", "error": str(exc)},
+                details={"provider": "google", "purpose": session.purpose, "error": str(exc)},
             )
             raise
 
@@ -220,12 +287,13 @@ class OAuthController:
 
     def fail(self, *, state: str, provider: str, error: str) -> None:
         try:
+            session = self.sessions.get(state)
             self.sessions.update(state, status="error", error=error)
         except KeyError:
             return
         self.audit_log.append(
             "oauth_failed",
-            details={"provider": provider, "error": error},
+            details={"provider": provider, "purpose": session.purpose, "error": error},
         )
 
 
