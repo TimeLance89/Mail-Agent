@@ -11,12 +11,13 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_workbench_is_first_class_and_adaptive_assets_are_loaded():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
-    assert "/assets/workbench.css?v=0.17.0" in index
-    assert "/assets/workbench-ui.js?v=0.17.0" in index
-    assert "/assets/adaptive-intelligence.css?v=0.17.0" in index
-    assert "/assets/adaptive-intelligence-ui.js?v=0.17.0" in index
-    assert "/assets/calendar-ui.js?v=0.17.0" in index
-    assert "/assets/dashboard-live.js?v=0.17.0" in index
+    assert "/assets/workbench.css?v=0.17.1" in index
+    assert "/assets/workbench-ui.js?v=0.17.1" in index
+    assert "/assets/adaptive-intelligence.css?v=0.17.1" in index
+    assert "/assets/adaptive-intelligence-ui.js?v=0.17.1" in index
+    assert "/assets/calendar-ui.js?v=0.17.1" in index
+    assert "/assets/dashboard-live.js?v=0.17.1" in index
+    assert "/assets/v171-ux.js?v=0.17.1" in index
     assert "/assets/attention-center.js" not in index
 
 
@@ -112,6 +113,7 @@ def test_workbench_has_real_filters_and_command_palette_not_preview_controls():
         "apps/web/workbench-ui.js",
         "apps/web/adaptive-intelligence-ui.js",
         "apps/web/calendar-ui.js",
+        "apps/web/v171-ux.js",
     ],
 )
 def test_workbench_javascript_syntax(path: str):
