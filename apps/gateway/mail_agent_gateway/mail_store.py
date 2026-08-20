@@ -164,6 +164,18 @@ class MailStore:
                 );
                 CREATE INDEX IF NOT EXISTS idx_agent_shadow_processing_time
                     ON agent_shadow_processing(mailbox_id, processed_at DESC);
+
+                CREATE TABLE IF NOT EXISTS message_attention (
+                    mailbox_id TEXT NOT NULL,
+                    message_id TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'open',
+                    owner_note TEXT,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY (mailbox_id, message_id)
+                );
+                CREATE INDEX IF NOT EXISTS idx_message_attention_status
+                    ON message_attention(status, updated_at DESC);
                 """
             )
             self._ensure_column(conn, "messages", "remote_id", "TEXT")
@@ -521,6 +533,76 @@ class MailStore:
                     error,
                 ),
             )
+
+
+    def list_attention(
+        self,
+        mailbox_id: str | None = None,
+        limit: int = 100,
+    ) -> list[dict[str, Any]]:
+        limit = max(1, min(int(limit), 500))
+        where_mailbox = "AND m.mailbox_id=?" if mailbox_id else ""
+        params: list[Any] = [mailbox_id] if mailbox_id else []
+        params.append(limit)
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                f"""
+                SELECT m.mailbox_id, m.uid, m.internet_message_id, m.thread_key, m.sender,
+                       m.recipients_json, m.subject, m.sent_at, m.body_text, m.seen, m.synced_at,
+                       m.remote_id, m.remote_thread_id, m.connector, m.agent_priority, m.agent_category,
+                       m.agent_summary, m.needs_reply, m.analyzed_at,
+                       COALESCE(a.status, 'open') AS attention_status,
+                       a.owner_note, a.updated_at AS attention_updated_at
+                  FROM messages AS m
+                  LEFT JOIN message_attention AS a
+                    ON a.mailbox_id=m.mailbox_id
+                   AND a.message_id=COALESCE(NULLIF(m.remote_id, ''), NULLIF(m.internet_message_id, ''), CAST(m.uid AS TEXT))
+                 WHERE (
+                        m.needs_reply=1
+                        OR m.agent_priority IN ('high', 'urgent')
+                        OR m.agent_category='security'
+                       )
+                   AND COALESCE(a.status, 'open')='open'
+                   {where_mailbox}
+                 ORDER BY
+                       CASE m.agent_priority WHEN 'urgent' THEN 0 WHEN 'high' THEN 1 ELSE 2 END,
+                       CASE WHEN m.needs_reply=1 THEN 0 ELSE 1 END,
+                       m.uid DESC
+                 LIMIT ?
+                """,
+                tuple(params),
+            ).fetchall()
+        return [self._message_row(row) for row in rows]
+
+    def resolve_attention(
+        self,
+        mailbox_id: str,
+        message_id: str,
+        *,
+        owner_note: str | None = None,
+    ) -> dict[str, Any]:
+        if self.get_message(mailbox_id, message_id) is None:
+            raise KeyError(message_id)
+        now = utc_now()
+        note = (owner_note or "").strip() or None
+        with self._lock, self._connect() as conn:
+            conn.execute(
+                """
+                INSERT INTO message_attention (
+                    mailbox_id, message_id, status, owner_note, created_at, updated_at
+                ) VALUES (?, ?, 'resolved', ?, ?, ?)
+                ON CONFLICT(mailbox_id, message_id) DO UPDATE SET
+                    status='resolved', owner_note=excluded.owner_note, updated_at=excluded.updated_at
+                """,
+                (mailbox_id, message_id, note, now, now),
+            )
+        return {
+            "mailbox_id": mailbox_id,
+            "message_id": message_id,
+            "status": "resolved",
+            "owner_note": note,
+            "updated_at": now,
+        }
 
     def enqueue_approval(
         self,

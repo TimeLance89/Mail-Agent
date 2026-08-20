@@ -17,6 +17,8 @@ from mail_agent_core.models import (
     AgentProfile,
     MailActionProposal,
     MailActionType,
+    MailCategory,
+    MailHandlingAction,
     RuleMode,
 )
 from mail_agent_core.shadow import ShadowReportStore
@@ -334,6 +336,20 @@ class AgentRuntime:
             )
             analysis.proposal.priority = priority
             analysis.proposal.category = category
+
+            category_action = MailHandlingAction.NONE
+            if rule_mode == RuleMode.NORMAL:
+                if category == MailCategory.NEWSLETTER:
+                    category_action = behavior.newsletter_action
+                elif category == MailCategory.ADVERTISING:
+                    category_action = behavior.advertising_action
+            if category_action != MailHandlingAction.NONE:
+                metadata = dict(analysis.proposal.metadata)
+                metadata["deterministic_category_handling"] = category.value
+                metadata["model_proposed_action"] = analysis.proposal.action.value
+                analysis.proposal.metadata = metadata
+                analysis.proposal.action = MailActionType(category_action.value)
+                analysis.policy = self.mail_agent.policy_engine.evaluate(profile, analysis.proposal)
 
             if rule_mode == RuleMode.DRAFT_ONLY and analysis.proposal.action in {
                 MailActionType.SEND_REPLY,
@@ -857,7 +873,7 @@ class AgentRuntime:
     async def run_mailbox(self, mailbox_id: str, *, force: bool = False) -> dict[str, Any]:
         config = self._configuration()
         behavior = self.behavior(config)
-        self._ensure_brain(config)
+        _, profile = self._ensure_brain(config)
         queue = (
             self.shadow_queue
             if behavior.execution_mode == AgentExecutionMode.SHADOW
@@ -904,6 +920,8 @@ class AgentRuntime:
         executed = 0
         below_confidence = 0
         errors = 0
+        marked_read = 0
+        postprocess_errors = 0
         provider_name = str(config.get("provider") or "")
         model = str(config.get("model") or "")
         for item in messages:
@@ -963,6 +981,37 @@ class AgentRuntime:
                     proposal_action=proposal.get("action"),
                     confidence=float(proposal.get("confidence") or 0.0),
                 )
+                if (
+                    behavior.mark_processed_read
+                    and result.get("confidence_accepted")
+                    and result.get("rule_mode") not in {RuleMode.ANALYZE_ONLY.value, RuleMode.IGNORE.value}
+                    and self.action_executor is not None
+                ):
+                    source_after = self.mail_store.get_message(mailbox_id, context.message_id)
+                    if source_after is not None and not source_after.get("seen"):
+                        read_proposal = MailActionProposal(
+                            action=MailActionType.MARK_READ,
+                            mailbox_id=mailbox_id,
+                            message_id=context.message_id,
+                            thread_id=context.thread_id,
+                            confidence=1.0,
+                            reason="Besitzer-Einstellung: erfolgreich bearbeitete Mail als gelesen markieren.",
+                        )
+                        read_policy = self.mail_agent.policy_engine.evaluate(profile, read_proposal)
+                        if read_policy.allowed and not read_policy.requires_approval:
+                            try:
+                                await self.action_executor.execute_direct(read_proposal)
+                                marked_read += 1
+                            except Exception as post_exc:
+                                postprocess_errors += 1
+                                self.audit_log.append(
+                                    "agent_postprocess_mark_read_failed",
+                                    details={
+                                        "mailbox_id": mailbox_id,
+                                        "message_id": context.message_id,
+                                        "error": str(post_exc),
+                                    },
+                                )
                 processed += 1
             except Exception as exc:
                 errors += 1
@@ -993,6 +1042,8 @@ class AgentRuntime:
             "executed": executed,
             "below_confidence": below_confidence,
             "errors": errors,
+            "marked_read": marked_read,
+            "postprocess_errors": postprocess_errors,
             "pending_before": pending_before,
             "pending_after": pending_after,
         }

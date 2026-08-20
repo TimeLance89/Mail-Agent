@@ -52,14 +52,14 @@ def test_0137_hotfix_version_is_synchronized_for_release_build():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
     workflow = (ROOT / ".github/workflows/build-installers.yml").read_text(encoding="utf-8")
 
-    assert 'version = "0.13.7"' in pyproject
+    assert 'version = "0.13.8"' in pyproject
     assert re.search(r'^APP_VERSION = "[^"]+"$', gateway, re.MULTILINE)
-    assert 'APP_VERSION = "0.13.7"' in launcher
-    assert 'app_version: str = "0.13.7"' in identity
-    assert '#define MyAppVersion "0.13.7"' in installer
-    assert "const APP_VERSION = '0.13.7'" in desktop
-    assert "/assets/startup-rescue.js?v=0.13.7" in index
-    assert "/assets/desktop-links.js?v=0.13.7" in index
+    assert 'APP_VERSION = "0.13.8"' in launcher
+    assert 'app_version: str = "0.13.8"' in identity
+    assert '#define MyAppVersion "0.13.8"' in installer
+    assert "const APP_VERSION = '0.13.8'" in desktop
+    assert "/assets/startup-rescue.js?v=0.13.8" in index
+    assert "/assets/desktop-links.js?v=0.13.8" in index
     assert '"apps/gateway/mail_agent_gateway/main.py"' in workflow
     assert '"apps/launcher/mail_agent_launcher/main.py"' in workflow
     assert "Could not synchronize APP_VERSION" in workflow

@@ -39,6 +39,7 @@ from .registry_client import RegistryClient
 from .schemas import (
     AgentAnalyzeRequest,
     AgentRunRequest,
+    AttentionResolveRequest,
     BehaviorSettingsRequest,
     BrainUpdateRequest,
     DraftSubmitRequest,
@@ -1104,6 +1105,32 @@ async def run_agent_cycle(body: AgentRunRequest) -> dict:
 @app.get("/v1/audit")
 async def recent_audit(limit: int = 100) -> dict:
     return {"events": audit_log.read_recent(limit)}
+
+
+
+@app.get("/v1/attention")
+async def list_attention(mailbox_id: str | None = None, limit: int = 100) -> dict:
+    _configuration_or_409()
+    return {"attention": mail_store.list_attention(mailbox_id, limit)}
+
+
+@app.post("/v1/attention/resolve")
+async def resolve_attention(body: AttentionResolveRequest) -> dict:
+    _configuration_or_409()
+    try:
+        item = mail_store.resolve_attention(
+            body.mailbox_id,
+            body.message_id,
+            owner_note=body.owner_note,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Attention message not found") from exc
+    audit_log.append(
+        "owner_attention_resolved",
+        actor=body.actor,
+        details={"mailbox_id": body.mailbox_id, "message_id": body.message_id},
+    )
+    return item
 
 
 @app.get("/v1/drafts")

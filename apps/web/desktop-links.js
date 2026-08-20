@@ -1,11 +1,12 @@
 (() => {
-  const APP_VERSION = '0.13.7';
+  const APP_VERSION = '0.13.8';
   const allowed = new Set([
     'overview',
     'activity',
     'shadow',
     'system',
     'inbox',
+    'attention',
     'approvals',
     'drafts',
     'settings',

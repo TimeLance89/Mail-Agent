@@ -148,7 +148,7 @@ class NotificationTracker:
                 if needs_reply
                 else "Eine neue wichtige Nachricht wartet in deiner Inbox."
             )
-        return DesktopNotification(title=title, message=message, view="inbox")
+        return DesktopNotification(title=title, message=message, view="attention")
 
     def observe(
         self,
