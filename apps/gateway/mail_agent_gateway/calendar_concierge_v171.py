@@ -18,7 +18,7 @@ from .calendar_service import (
 _DMY_DATE = re.compile(r"(?<!\d)(\d{1,2})\.(\d{1,2})\.(\d{4})(?!\d)")
 _ISO_DATE = re.compile(r"(?<!\d)(\d{4})-(\d{2})-(\d{2})(?!\d)")
 _TIME_COLON = re.compile(r"(?<!\d)([01]?\d|2[0-3]):([0-5]\d)(?!\d)")
-_TIME_UHR = re.compile(r"(?<!\d)([01]?\d|2[0-3])\s*Uhr\b", re.IGNORECASE)
+_TIME_UHR = re.compile(r"(?<![\d:])([01]?\d|2[0-3])\s*Uhr\b", re.IGNORECASE)
 _CREATE_INTENT = re.compile(
     r"\b(erstelle|erstell|anlegen|lege\s+.*\s+an|eintragen|trag\s+.*\s+ein|"
     r"plane\s+(diesen|den)\s+termin|übernimm\s+.*\s+kalender|buche)\b",
