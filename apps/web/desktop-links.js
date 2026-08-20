@@ -1,5 +1,5 @@
 (() => {
-  const APP_VERSION = '0.17.1';
+  const APP_VERSION = '0.17.2';
   const allowed = new Set([
     'overview',
     'calendar',
