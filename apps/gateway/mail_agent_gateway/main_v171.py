@@ -12,6 +12,7 @@ from .schemas import DraftSubmitRequest
 
 APP_VERSION = "0.17.1"
 base = previous.base
+_original_calendar_http_error = previous._calendar_http_error
 
 previous.APP_VERSION = APP_VERSION
 previous.previous.APP_VERSION = APP_VERSION
@@ -98,7 +99,7 @@ def _calendar_http_error_v171(exc: Exception, *, operation: str) -> HTTPExceptio
             status_code=503,
             detail="Google Calendar konnte nicht erreicht werden. Prüfe die Internetverbindung und versuche es erneut.",
         )
-    return previous._calendar_http_error(exc, operation=operation)
+    return _original_calendar_http_error(exc, operation=operation)
 
 
 previous._calendar_http_error = _calendar_http_error_v171
@@ -122,6 +123,8 @@ if not getattr(base.mail_store, "_v171_active_draft_filter", False):
 def _discard_draft(draft_id: str, *, actor: str) -> dict[str, Any]:
     store = base.mail_store
     now = utc_now()
+    rejected_pending = False
+    approval_id: str | None = None
     with store._lock, store._connect() as conn:  # noqa: SLF001 - same local persistence boundary
         row = conn.execute("SELECT * FROM drafts WHERE draft_id=?", (draft_id,)).fetchone()
         if row is None:
@@ -148,6 +151,7 @@ def _discard_draft(draft_id: str, *, actor: str) -> dict[str, Any]:
                     """,
                     (now, actor, approval_id),
                 )
+                rejected_pending = True
             elif approval["status"] != "rejected":
                 raise RuntimeError(
                     "Die Freigabe wurde bereits erteilt. Prüfe zuerst den Ausführungsstatus, bevor der Entwurf verworfen wird."
@@ -169,7 +173,7 @@ def _discard_draft(draft_id: str, *, actor: str) -> dict[str, Any]:
         details={
             "draft_id": draft_id,
             "approval_id": approval_id,
-            "pending_approval_rejected": bool(approval_id),
+            "pending_approval_rejected": rejected_pending,
         },
     )
     return store._draft_row(updated)  # noqa: SLF001
