@@ -102,7 +102,7 @@ class CodexUsageReader:
                         "clientInfo": {
                             "name": "mail_agent",
                             "title": "MAIL-AGENT",
-                            "version": "0.17.2",
+                            "version": "0.17.3",
                         }
                     },
                 },
@@ -179,19 +179,15 @@ class CodexUsageReader:
                 "source": "unknown",
                 "detail": health.detail,
                 "rate_limits": None,
-                "account_usage": None,
+                "usage": None,
             }
         rate, usage, error = await self._rpc()
-        normalized = self._normalize_rate_limits(rate)
-        available = normalized is not None or isinstance(usage, dict)
+        normalized_rate = self._normalize_rate_limits(rate)
+        source = "provider_reported" if normalized_rate or usage else "unknown"
         return {
-            "available": available,
-            "source": "provider_reported" if available else "unknown",
-            "detail": error or (
-                "Offizieller Codex app-server Snapshot"
-                if available
-                else "Keine Usage-Daten vom installierten Codex-Client gemeldet"
-            ),
-            "rate_limits": normalized,
-            "account_usage": usage if isinstance(usage, dict) else None,
+            "available": True,
+            "source": source,
+            "detail": error or health.detail,
+            "rate_limits": normalized_rate,
+            "usage": usage if isinstance(usage, dict) else None,
         }
