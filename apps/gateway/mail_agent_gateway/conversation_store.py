@@ -158,17 +158,27 @@ class ConversationStore:
         due_days = to_reply_days if status == ConversationStatus.TO_REPLY else awaiting_reply_days if status == ConversationStatus.AWAITING_REPLY else None
         with self._lock, self._connect() as conn:
             existing = conn.execute(
-                "SELECT status, waiting_since, snoozed_until, followup_draft_id FROM conversation_threads WHERE mailbox_id=? AND thread_id=?",
+                "SELECT status, waiting_since, snoozed_until, followup_draft_id, last_message_id FROM conversation_threads WHERE mailbox_id=? AND thread_id=?",
                 (message.mailbox_id, thread_id),
             ).fetchone()
+            same_message_state = bool(
+                existing
+                and existing["status"] == status.value
+                and str(existing["last_message_id"] or "") == message.message_id
+            )
             waiting_since = (
                 existing["waiting_since"]
-                if existing and existing["status"] == status.value and existing["waiting_since"]
+                if same_message_state and existing["waiting_since"]
                 else now.isoformat() if status in {ConversationStatus.TO_REPLY, ConversationStatus.AWAITING_REPLY} else None
             )
             due_at = _add_business_days(_parse_dt(waiting_since) or now, due_days)
-            snoozed_until = existing["snoozed_until"] if existing else None
-            followup_draft_id = existing["followup_draft_id"] if existing else None
+            # A new incoming message is new work: an old snooze or follow-up draft must never hide it.
+            snoozed_until = existing["snoozed_until"] if same_message_state else None
+            followup_draft_id = (
+                existing["followup_draft_id"]
+                if same_message_state and status == ConversationStatus.AWAITING_REPLY
+                else None
+            )
             conn.execute(
                 """
                 INSERT INTO conversation_threads (
@@ -185,10 +195,7 @@ class ConversationStore:
                     waiting_since=excluded.waiting_since,
                     due_at=excluded.due_at,
                     snoozed_until=excluded.snoozed_until,
-                    followup_draft_id=CASE
-                        WHEN excluded.status='awaiting_reply' THEN conversation_threads.followup_draft_id
-                        ELSE NULL
-                    END,
+                    followup_draft_id=excluded.followup_draft_id,
                     decision_json=excluded.decision_json,
                     coalesced_count=excluded.coalesced_count,
                     updated_at=excluded.updated_at
@@ -225,6 +232,18 @@ class ConversationStore:
         now = datetime.now(UTC)
         due_at = _add_business_days(now, awaiting_reply_days)
         with self._lock, self._connect() as conn:
+            existing = conn.execute(
+                "SELECT * FROM conversation_threads WHERE mailbox_id=? AND thread_id=?",
+                (mailbox_id, thread_id),
+            ).fetchone()
+            # Approval execution is idempotent. Replaying an already-sent approval must not
+            # restart the waiting clock and silently postpone its follow-up deadline.
+            if (
+                existing
+                and existing["status"] == ConversationStatus.AWAITING_REPLY.value
+                and str(existing["last_message_id"] or "") == str(source_message_id or "")
+            ):
+                return self._thread_row(existing)
             conn.execute(
                 """
                 INSERT INTO conversation_threads (

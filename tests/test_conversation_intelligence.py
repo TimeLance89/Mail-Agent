@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+import time
 
 from mail_agent_core.agent import MailMessageContext
 from mail_agent_core.models import ConversationStatus, MailActionProposal, MailActionType, MailCategory
@@ -46,3 +47,60 @@ def test_public_mail_domains_never_create_sender_pattern(tmp_path):
     for i in range(8):
         store.record_sender_observation(mailbox_id="mb", message_id=f"p{i}", sender="someone@gmail.com", category="advertising", min_samples=6, confidence_threshold=.9)
     assert store.list_pattern_suggestions(mailbox_id="mb")==[]
+
+
+def test_new_message_clears_old_snooze_and_followup_draft(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    store.record_analysis(
+        message=message("m2"),
+        proposal=proposal(status=ConversationStatus.AWAITING_REPLY),
+        decision_path=[],
+        to_reply_days=2,
+        awaiting_reply_days=4,
+    )
+    store.mark_followup_draft("mb", "t1", "dr1")
+    store.snooze("mb", "t1", (datetime.now(UTC) + timedelta(days=3)).isoformat())
+
+    item = store.record_analysis(
+        message=message("m3"),
+        proposal=proposal(status=ConversationStatus.TO_REPLY),
+        decision_path=[],
+        to_reply_days=2,
+        awaiting_reply_days=4,
+    )
+
+    assert item["last_message_id"] == "m3"
+    assert item["status"] == "to_reply"
+    assert item["snoozed_until"] is None
+    assert item["followup_draft_id"] is None
+
+
+def test_duplicate_outbound_execution_does_not_restart_followup_clock(tmp_path):
+    store = ConversationStore(tmp_path / "conversation.db")
+    store.record_analysis(
+        message=message("m2"),
+        proposal=proposal(),
+        decision_path=[],
+        to_reply_days=2,
+        awaiting_reply_days=4,
+    )
+    first = store.mark_outbound_sent(
+        mailbox_id="mb",
+        thread_id="t1",
+        source_message_id="m2",
+        recipient="person@company.example",
+        subject="Re: Subject",
+        awaiting_reply_days=4,
+    )
+    time.sleep(0.01)
+    second = store.mark_outbound_sent(
+        mailbox_id="mb",
+        thread_id="t1",
+        source_message_id="m2",
+        recipient="person@company.example",
+        subject="Re: Subject",
+        awaiting_reply_days=4,
+    )
+
+    assert second["waiting_since"] == first["waiting_since"]
+    assert second["due_at"] == first["due_at"]
