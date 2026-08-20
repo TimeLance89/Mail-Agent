@@ -8,11 +8,9 @@ from mail_agent_core.models import MailCategory
 from mail_agent_core.providers import ProviderHealth
 
 from mail_agent_gateway.adaptive_intelligence import (
-    ModelEndpoint,
     ModelRoutingRequest,
     ModelRoutingSettings,
     OwnerProfileCandidate,
-    OwnerProfileConsentRequest,
 )
 from mail_agent_gateway.conversation_store import ConversationStore
 from mail_agent_gateway.release_audit_fixes import (
@@ -100,6 +98,29 @@ async def test_automatic_local_routing_prefers_smallest_discoverable_model():
     assert route.provider_name == "ollama"
     assert route.model == "tiny:3b"
     assert route.source == "automatic_local"
+
+
+@pytest.mark.asyncio
+async def test_retained_expert_override_is_dormant_while_mode_is_automatic():
+    state = _routing_state(
+        {
+            "mode": "automatic",
+            "normal": {"provider": "ollama", "model": "tiny:3b"},
+        }
+    )
+    router = ReleaseModelRouter(
+        state,
+        {
+            "ollama": FakeProvider(["tiny:3b"]),
+            "codex": FakeProvider(["gpt-main"]),
+        },
+    )
+    route = await router.route("normal")
+    assert (route.provider_name, route.model, route.source) == (
+        "codex",
+        "gpt-main",
+        "primary_fallback",
+    )
 
 
 @pytest.mark.asyncio
@@ -229,6 +250,7 @@ def test_activity_trace_reports_deterministic_origin_not_fake_codex_llm():
     assert event["data"]["llm_called"] is False
     assert event["data"]["provider"] is None
     assert "codex" not in event["detail"].lower()
+    assert _DECISION_TRACE.get() is None
 
 
 def test_adaptive_ui_contract_has_truthful_usage_and_preserves_overrides():
@@ -242,7 +264,7 @@ def test_adaptive_ui_contract_has_truthful_usage_and_preserves_overrides():
 
 
 @pytest.mark.asyncio
-async def test_model_routing_api_returns_409_before_onboarding_and_preserves_overrides(monkeypatch):
+async def test_model_routing_api_returns_409_before_onboarding_and_preserves_overrides():
     from mail_agent_gateway import main_v16
 
     original_state = main_v16.model_router.state_store
