@@ -1,6 +1,6 @@
 from fastapi.testclient import TestClient
 
-from mail_agent_gateway.main_v171 import app
+from mail_agent_gateway.main_v172 import app
 
 
 def test_adaptive_calendar_and_draft_routes_remain_reachable_with_web_bundle_mounted():
@@ -11,7 +11,7 @@ def test_adaptive_calendar_and_draft_routes_remain_reachable_with_web_bundle_mou
     calendar = client.get("/v1/calendar/status")
 
     assert status.status_code == 200
-    assert status.json()["version"] == "0.17.1"
+    assert status.json()["version"] == "0.17.2"
     assert status.json()["privacy"]["usage_contains_mail_content"] is False
     assert privacy.status_code == 200
     assert "usage_events" in privacy.json()["tables"]
@@ -33,6 +33,7 @@ def test_calendar_and_draft_lifecycle_routes_are_exposed_in_openapi():
         "/v1/calendar/approvals",
         "/v1/calendar/approvals/{approval_id}/approve",
         "/v1/calendar/approvals/{approval_id}/reject",
+        "/v1/calendar/approvals/{approval_id}/prepare-mail-reply",
         "/v1/drafts/{draft_id}/discard",
     ):
         assert route in paths
@@ -44,8 +45,9 @@ def test_web_root_and_assets_mount_remain_available_after_route_reordering():
 
     assert root.status_code == 200
     assert "<title>MAIL-AGENT</title>" in root.text
-    assert "/assets/calendar-ui.js?v=0.17.1" in root.text
-    assert "/assets/v171-ux.js?v=0.17.1" in root.text
+    assert "/assets/calendar-ui.js?v=0.17.2" in root.text
+    assert "/assets/v171-ux.js?v=0.17.2" in root.text
+    assert "/assets/v172-ux.js?v=0.17.2" in root.text
 
 
 def test_named_catch_all_web_mount_is_last_route():

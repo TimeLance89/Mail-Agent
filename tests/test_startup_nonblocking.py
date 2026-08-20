@@ -22,11 +22,11 @@ def test_static_startup_shell_is_present_before_javascript_boot():
 
 def test_startup_guard_runs_immediately_after_main_app():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
-    assert "/assets/startup-rescue.js?v=0.17.1" in index
-    assert index.index("/assets/app.js?v=0.17.1") < index.index("/assets/startup-rescue.js?v=0.17.1")
-    assert index.index("/assets/startup-rescue.js?v=0.17.1") < index.index("/assets/workbench-ui.js?v=0.17.1")
-    assert index.index("/assets/workbench-ui.js?v=0.17.1") < index.index("/assets/mail-provider-setup.js?v=0.17.1")
-    assert index.index("/assets/mail-provider-setup.js?v=0.17.1") < index.index("/assets/llm-model-settings-v2.js?v=0.17.1")
+    assert "/assets/startup-rescue.js?v=0.17.2" in index
+    assert index.index("/assets/app.js?v=0.17.2") < index.index("/assets/startup-rescue.js?v=0.17.2")
+    assert index.index("/assets/startup-rescue.js?v=0.17.2") < index.index("/assets/workbench-ui.js?v=0.17.2")
+    assert index.index("/assets/workbench-ui.js?v=0.17.2") < index.index("/assets/mail-provider-setup.js?v=0.17.2")
+    assert index.index("/assets/mail-provider-setup.js?v=0.17.2") < index.index("/assets/llm-model-settings-v2.js?v=0.17.2")
 
 
 def test_every_web_asset_is_cache_busted_for_the_release():
@@ -35,9 +35,9 @@ def test_every_web_asset_is_cache_busted_for_the_release():
         "styles.css", "agent-settings.css", "attention-center.css", "mail-provider-setup.css",
         "app.js", "startup-rescue.js", "mail-provider-setup.js", "llm-model-settings-v2.js",
         "dashboard-live.js", "desktop-links.js", "workbench.css", "workbench-ui.js", "calendar-ui.js",
-        "v171-ux.js",
+        "v171-ux.js", "v172-ux.js",
     ):
-        assert f"/assets/{asset}?v=0.17.1" in index
+        assert f"/assets/{asset}?v=0.17.2" in index
 
 
 def test_installed_dashboard_can_render_before_optional_provider_enrichment_finishes():
@@ -76,6 +76,7 @@ def test_ui_observers_cannot_recurse_on_their_own_dom_updates():
     desktop = DESKTOP_LINKS.read_text(encoding="utf-8")
     provider = (ROOT / "apps/web/mail-provider-setup.js").read_text(encoding="utf-8")
     calendar = (ROOT / "apps/web/calendar-ui.js").read_text(encoding="utf-8")
+    v172 = (ROOT / "apps/web/v172-ux.js").read_text(encoding="utf-8")
 
     assert "observer.observe(appRoot, { childList: true });" in dashboard
     assert "observer.observe(app, { childList: true });" in desktop
@@ -84,6 +85,7 @@ def test_ui_observers_cannot_recurse_on_their_own_dom_updates():
     assert "subtree: true" not in desktop
     assert "subtree: true" not in provider
     assert "MutationObserver" not in calendar
+    assert "MutationObserver" not in v172
     assert "setInterval" not in calendar
     assert "if (kicker.textContent !== text) kicker.textContent = text;" in dashboard
     assert "if (footer && footer.textContent !== text) footer.textContent = text;" in desktop
@@ -93,6 +95,13 @@ def test_startup_guard_javascript_syntax():
     node = shutil.which("node")
     if not node:
         pytest.skip("Node.js is not available")
-    for source in (STARTUP_GUARD, DASHBOARD_LIVE, DESKTOP_LINKS, ROOT / "apps/web/mail-provider-setup.js", ROOT / "apps/web/calendar-ui.js"):
+    for source in (
+        STARTUP_GUARD,
+        DASHBOARD_LIVE,
+        DESKTOP_LINKS,
+        ROOT / "apps/web/mail-provider-setup.js",
+        ROOT / "apps/web/calendar-ui.js",
+        ROOT / "apps/web/v172-ux.js",
+    ):
         result = subprocess.run([node, "--check", str(source)], capture_output=True, text=True, check=False)
         assert result.returncode == 0, result.stderr

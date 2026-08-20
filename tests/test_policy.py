@@ -43,6 +43,13 @@ def test_observer_can_read_but_not_draft(engine: PolicyEngine):
     assert not decision.allowed
 
 
+def test_assistant_can_propose_send_but_it_always_requires_approval(engine: PolicyEngine):
+    decision = engine.evaluate(profile(AutonomyMode.ASSISTANT), proposal(MailActionType.SEND_REPLY))
+    assert decision.allowed
+    assert decision.requires_approval
+    assert decision.risk == "high"
+
+
 def test_copilot_requires_approval_to_send(engine: PolicyEngine):
     decision = engine.evaluate(profile(AutonomyMode.COPILOT), proposal(MailActionType.SEND_REPLY))
     assert decision.allowed
