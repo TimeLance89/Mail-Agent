@@ -21,7 +21,7 @@ jobs:
         with:
           python-version: '3.12'
       - name: Apply refinements
-        run: python tools/refine_0138.py
+        run: python tools/run_refine_0138.py
       - name: Commit refinements
         run: |
           git config user.name "github-actions[bot]"
