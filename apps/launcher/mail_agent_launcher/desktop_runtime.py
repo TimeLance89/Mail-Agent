@@ -8,6 +8,7 @@ import httpx
 
 ALLOWED_DESKTOP_VIEWS = {
     "overview",
+    "calendar",
     "activity",
     "shadow",
     "system",
@@ -48,6 +49,7 @@ class NotificationTracker:
     draft_ids: set[str] = field(default_factory=set)
     health_issue_keys: set[str] = field(default_factory=set)
     priority_message_ids: set[str] = field(default_factory=set)
+    calendar_activity_keys: set[str] = field(default_factory=set)
 
     @staticmethod
     def _health_issues(health: dict[str, Any]) -> set[str]:
@@ -126,6 +128,21 @@ class NotificationTracker:
         return result
 
     @staticmethod
+    def _calendar_activity(health: dict[str, Any]) -> dict[str, dict[str, Any]]:
+        result: dict[str, dict[str, Any]] = {}
+        for item in health.get("_desktop_calendar_activity", []) or []:
+            if not isinstance(item, dict):
+                continue
+            outcome = str(item.get("outcome") or "")
+            if outcome not in {"calendar_auto_scheduled", "needs_attention"}:
+                continue
+            trace_id = str(item.get("trace_id") or "")
+            last_at = str(item.get("last_at") or item.get("started_at") or "")
+            if trace_id:
+                result[f"{trace_id}:{outcome}:{last_at}"] = item
+        return result
+
+    @staticmethod
     def _priority_notification(items: list[dict[str, Any]]) -> DesktopNotification:
         priorities = {str(item.get("agent_priority") or "").lower() for item in items}
         categories = {str(item.get("agent_category") or "").lower() for item in items}
@@ -171,6 +188,8 @@ class NotificationTracker:
         health_issue_keys = self._health_issues(health)
         important_messages = self._important_messages(health)
         priority_message_ids = set(important_messages)
+        calendar_activity = self._calendar_activity(health)
+        calendar_activity_keys = set(calendar_activity)
 
         if not self.initialized:
             self.initialized = True
@@ -178,6 +197,7 @@ class NotificationTracker:
             self.draft_ids = draft_ids
             self.health_issue_keys = health_issue_keys
             self.priority_message_ids = priority_message_ids
+            self.calendar_activity_keys = calendar_activity_keys
             return []
 
         notifications: list[DesktopNotification] = []
@@ -185,11 +205,48 @@ class NotificationTracker:
         new_drafts = draft_ids - self.draft_ids
         new_health_issues = health_issue_keys - self.health_issue_keys
         new_priority_messages = priority_message_ids - self.priority_message_ids
+        new_calendar_activity = calendar_activity_keys - self.calendar_activity_keys
 
         if new_priority_messages:
             notifications.append(
                 self._priority_notification(
                     [important_messages[key] for key in sorted(new_priority_messages)]
+                )
+            )
+        completed_calendar = [
+            calendar_activity[key]
+            for key in sorted(new_calendar_activity)
+            if calendar_activity[key].get("outcome") == "calendar_auto_scheduled"
+        ]
+        attention_calendar = [
+            calendar_activity[key]
+            for key in sorted(new_calendar_activity)
+            if calendar_activity[key].get("outcome") == "needs_attention"
+        ]
+        if completed_calendar:
+            count = len(completed_calendar)
+            notifications.append(
+                DesktopNotification(
+                    title="Termin automatisch übernommen",
+                    message=(
+                        "Autonomous hat einen eindeutigen Termin geprüft und eingetragen."
+                        if count == 1
+                        else f"Autonomous hat {count} eindeutige Termine geprüft und eingetragen."
+                    ),
+                    view="calendar",
+                )
+            )
+        if attention_calendar:
+            count = len(attention_calendar)
+            notifications.append(
+                DesktopNotification(
+                    title="Terminentscheidung nötig",
+                    message=(
+                        "Eine Terminanfrage ist nicht eindeutig oder kollidiert und wartet auf dich."
+                        if count == 1
+                        else f"{count} Terminanfragen brauchen wegen Unklarheit oder Konflikt deine Entscheidung."
+                    ),
+                    view="attention",
                 )
             )
         if new_approvals:
@@ -224,6 +281,7 @@ class NotificationTracker:
         self.draft_ids = draft_ids
         self.health_issue_keys = health_issue_keys
         self.priority_message_ids.update(priority_message_ids)
+        self.calendar_activity_keys.update(calendar_activity_keys)
         return notifications
 
 
@@ -321,6 +379,17 @@ class DesktopGatewayClient:
         except Exception:
             return []
 
+    def _calendar_activity(self) -> list[dict[str, Any]]:
+        try:
+            return [
+                item
+                for item in self.request("/v1/agent/activity?limit=50").get("traces", [])
+                if isinstance(item, dict)
+                and str(item.get("outcome") or "") in {"calendar_auto_scheduled", "needs_attention"}
+            ]
+        except Exception:
+            return []
+
     def snapshot(self) -> dict[str, Any]:
         settings = self.request("/v1/settings")
         brain = self.request("/v1/agent/brain")
@@ -330,6 +399,7 @@ class DesktopGatewayClient:
         drafts = self.request("/v1/drafts?limit=100").get("drafts", [])
         health = dict(self.request("/v1/system/health"))
         health["_desktop_priority_messages"] = self._priority_messages()
+        health["_desktop_calendar_activity"] = self._calendar_activity()
         status = summarize_desktop_status(
             settings=settings,
             brain=brain,

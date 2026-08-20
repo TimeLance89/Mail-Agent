@@ -5,7 +5,15 @@ from typing import Any
 from .mail_store import MailStore, utc_now
 
 
+_TERMINAL_DRAFT_STATUSES = {"discarded", "sent"}
+
+
 def install_active_draft_filter(store: MailStore) -> None:
+    """Expose only drafts that still require work in the normal draft list.
+
+    Sent and discarded drafts remain persisted for audit/recovery, but they are terminal states and
+    must not keep appearing in the user's active "Entwürfe" workspace.
+    """
     if getattr(store, "_v171_active_draft_filter", False):
         return
     original = store.list_drafts
@@ -13,7 +21,11 @@ def install_active_draft_filter(store: MailStore) -> None:
     def list_active(mailbox_id: str | None = None, limit: int = 100):
         requested = max(1, min(int(limit), 500))
         items = original(mailbox_id, 500)
-        return [item for item in items if item.get("status") != "discarded"][:requested]
+        return [
+            item
+            for item in items
+            if str(item.get("status") or "").casefold() not in _TERMINAL_DRAFT_STATUSES
+        ][:requested]
 
     store.list_drafts = list_active  # type: ignore[method-assign]
     store._v171_active_draft_filter = True  # type: ignore[attr-defined]

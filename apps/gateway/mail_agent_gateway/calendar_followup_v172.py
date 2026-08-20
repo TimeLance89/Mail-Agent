@@ -8,6 +8,8 @@ from mail_agent_core.models import MailActionProposal, MailActionType
 from mail_agent_core.providers import CompletionRequest
 from mail_agent_core.signature import stamp_outgoing_proposal, strip_agent_signature
 
+from .draft_lifecycle_v171 import discard_draft
+
 
 def _existing_followup_draft(mail_store: Any, calendar_approval_id: str) -> dict[str, Any] | None:
     """Find a previously prepared follow-up, including discarded rows.
@@ -32,6 +34,44 @@ def _existing_followup_draft(mail_store: Any, calendar_approval_id: str) -> dict
         if str(metadata.get("calendar_source_approval_id") or "") == calendar_approval_id:
             return mail_store.get_draft(str(row["draft_id"]))
     return None
+
+
+def _discard_superseded_source_drafts(
+    mail_store: Any,
+    audit_log: Any,
+    *,
+    mailbox_id: str,
+    source_message_id: str,
+    actor: str,
+) -> int:
+    """Remove preliminary replies that became obsolete once the appointment was accepted.
+
+    The generic mail agent may have prepared a reply such as "I will check the date" during the normal
+    analysis pass. Once the authoritative calendar workflow has accepted the appointment, keeping that
+    draft would present contradictory work next to the real confirmation. Pending approvals are rejected
+    atomically by the normal draft discard lifecycle; already executing/sent work is never touched.
+    """
+
+    discarded = 0
+    for draft in list(mail_store.list_drafts(mailbox_id, 200)):
+        if str(draft.get("message_id") or "") != source_message_id:
+            continue
+        metadata = ((draft.get("proposal") or {}).get("metadata") or {})
+        if metadata.get("calendar_confirmation") is True:
+            continue
+        try:
+            discard_draft(
+                mail_store,
+                audit_log,
+                str(draft["draft_id"]),
+                actor=actor,
+            )
+            discarded += 1
+        except (KeyError, RuntimeError):
+            # Never turn a successfully accepted appointment into an error because unrelated mail work
+            # has already advanced beyond the safely discardable state.
+            continue
+    return discarded
 
 
 def _format_when(event: dict[str, Any], language: str) -> str:
@@ -101,9 +141,18 @@ async def prepare_calendar_confirmation_followup(
         submitted = draft_service.submit_for_approval(existing["draft_id"], actor=actor)
         return {**submitted, "reused": True, "state": submitted["draft"].get("status")}
 
-    source = mail_store.get_message(str(proposal.get("mailbox_id") or ""), source_message_id)
+    mailbox_id = str(proposal.get("mailbox_id") or "")
+    source = mail_store.get_message(mailbox_id, source_message_id)
     if source is None:
         raise KeyError(source_message_id)
+
+    superseded_drafts = _discard_superseded_source_drafts(
+        mail_store,
+        audit_log,
+        mailbox_id=mailbox_id,
+        source_message_id=source_message_id,
+        actor=actor,
+    )
 
     profile = draft_service._profile()  # noqa: SLF001 - same trusted application boundary
     language = str(getattr(profile, "language", "de") or "de").casefold()
@@ -143,7 +192,7 @@ Confirm only the supplied appointment facts. Do not invent people, locations, me
 
     reply = MailActionProposal(
         action=MailActionType.CREATE_DRAFT,
-        mailbox_id=str(proposal.get("mailbox_id") or ""),
+        mailbox_id=mailbox_id,
         message_id=source_message_id,
         thread_id=str(source.get("thread_key") or "") or None,
         recipient=str(source.get("sender") or "").strip(),
@@ -180,9 +229,10 @@ Confirm only the supplied appointment facts. Do not invent people, locations, me
             "calendar_approval_id": calendar_approval_id,
             "draft_id": submitted["draft"]["draft_id"],
             "mail_approval_id": submitted["approval"]["approval_id"],
-            "mailbox_id": proposal.get("mailbox_id"),
+            "mailbox_id": mailbox_id,
             "source_message_id": source_message_id,
             "calendar_action": action,
+            "superseded_drafts": superseded_drafts,
             "routing": routing,
         },
     )
@@ -190,5 +240,6 @@ Confirm only the supplied appointment facts. Do not invent people, locations, me
         **submitted,
         "reused": False,
         "state": submitted["draft"].get("status"),
+        "superseded_drafts": superseded_drafts,
         "routing": routing,
     }

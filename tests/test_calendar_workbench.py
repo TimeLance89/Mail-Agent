@@ -16,19 +16,19 @@ V172_UX = ROOT / "apps/web/v172-ux.js"
 
 def test_calendar_workbench_is_loaded_and_cache_busted():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
-    assert "/assets/calendar-ui.js?v=0.17.2" in index
-    assert "/assets/calendar-workbench.js?v=0.17.2" in index
-    assert "/assets/calendar-mail-suggestions.js?v=0.17.2" in index
-    assert "/assets/v171-ux.js?v=0.17.2" in index
-    assert "/assets/v172-ux.js?v=0.17.2" in index
-    assert index.index("/assets/calendar-workbench.js?v=0.17.2") < index.index(
-        "/assets/calendar-mail-suggestions.js?v=0.17.2"
+    assert "/assets/calendar-ui.js?v=0.17.3" in index
+    assert "/assets/calendar-workbench.js?v=0.17.3" in index
+    assert "/assets/calendar-mail-suggestions.js?v=0.17.3" in index
+    assert "/assets/v171-ux.js?v=0.17.3" in index
+    assert "/assets/v172-ux.js?v=0.17.3" in index
+    assert index.index("/assets/calendar-workbench.js?v=0.17.3") < index.index(
+        "/assets/calendar-mail-suggestions.js?v=0.17.3"
     )
-    assert index.index("/assets/dashboard-live.js?v=0.17.2") < index.index(
-        "/assets/v171-ux.js?v=0.17.2"
+    assert index.index("/assets/dashboard-live.js?v=0.17.3") < index.index(
+        "/assets/v171-ux.js?v=0.17.3"
     )
-    assert index.index("/assets/v171-ux.js?v=0.17.2") < index.index(
-        "/assets/v172-ux.js?v=0.17.2"
+    assert index.index("/assets/v171-ux.js?v=0.17.3") < index.index(
+        "/assets/v172-ux.js?v=0.17.3"
     )
 
 
@@ -66,7 +66,7 @@ def test_v172_exposes_discard_in_actual_workbench_and_calendar_confirmation_hand
     assert "Freigeben & senden" in source
 
 
-def test_calendar_mail_suggestions_are_actionable_but_side_effect_free_until_user_action():
+def test_calendar_mail_suggestions_endpoint_remains_side_effect_free_and_actionable():
     source = MAIL_SUGGESTIONS.read_text(encoding="utf-8")
     assert "/v1/calendar/mail-suggestions" in source
     assert "Mail-Inhalte bleiben untrusted" in source
