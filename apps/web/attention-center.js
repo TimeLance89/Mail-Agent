@@ -38,7 +38,7 @@
     const category = item.agent_category || 'other';
     return `<article class="attention-card">
       <div class="attention-head"><div><span class="attention-kicker">${escHtml(attentionLabel(item))}</span><h3>${escHtml(item.subject || '(ohne Betreff)')}</h3><p>${escHtml(item.sender || '')}</p></div><span class="intel-badge ${escHtml(priority)}">${escHtml(priority)}</span></div>
-      <div class="attention-tags"><span>${escHtml(category)}</span>${item.needs_reply === true ? '<span>Antwort nötig</span>' : ''}</div>
+      <div class="attention-tags"><span>${escHtml(category)}</span>${item.needs_reply === true ? '<span>Antwort nötig</span>' : ''}${item.attention_source === 'shadow' ? '<span>Shadow-Ergebnis</span>' : ''}</div>
       <p class="attention-summary">${escHtml(summary)}</p>
       <label class="field"><span>Meine Rückmeldung / Notiz</span><textarea rows="3" data-attention-note="${escHtml(id)}" placeholder="Optional: Entscheidung, Kontext oder Notiz für dich …">${escHtml(item.owner_note || '')}</textarea></label>
       <div class="inline-actions left"><button class="btn primary compact" data-attention-resolve="${escHtml(id)}" data-mailbox="${escHtml(item.mailbox_id)}">Erledigt / Rückmeldung speichern</button></div>

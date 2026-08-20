@@ -23,6 +23,9 @@ def test_attention_ui_and_routes_are_wired():
     assert "/v1/attention/resolve" in js
     assert '@app.get("/v1/attention")' in main
     assert '@app.post("/v1/attention/resolve")' in main
+    assert "shadow_reports.recent_reports" in main
+    assert "attention_source" in main
+    assert "Shadow-Ergebnis" in js
     assert 'view="attention"' in desktop
 
 

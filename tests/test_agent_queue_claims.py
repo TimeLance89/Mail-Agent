@@ -67,3 +67,14 @@ def test_error_and_stale_running_claims_are_retryable(tmp_path: Path):
         conn.execute("UPDATE agent_processing SET processed_at=? WHERE message_id='remote-2'", (old,))
     stale_retry = queue.list_pending("mb-1", 2)
     assert "remote-2" in {item["remote_id"] for item in stale_retry}
+
+
+def test_successfully_processed_unread_mail_is_available_for_postprocess_without_requeue(tmp_path: Path):
+    store = MailStore(tmp_path / "mail.db")
+    store.upsert_messages([_message(1)])
+    store.record_agent_processing("mb-1", "remote-1", status="processed")
+    queue = AgentWorkQueue(store)
+
+    assert queue.list_pending("mb-1", 1) == []
+    unread = store.list_processed_unread("mb-1")
+    assert [item["remote_id"] for item in unread] == ["remote-1"]

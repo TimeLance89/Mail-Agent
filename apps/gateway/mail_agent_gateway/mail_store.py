@@ -535,6 +535,41 @@ class MailStore:
             )
 
 
+
+    def list_processed_unread(self, mailbox_id: str, limit: int = 100) -> list[dict[str, Any]]:
+        """Return successfully processed messages still unread in the real mailbox mirror.
+
+        This is intentionally separate from the LLM work queue: transient mailbox mutation failures
+        can therefore be retried without analyzing the mail a second time.
+        """
+        limit = max(1, min(int(limit), 500))
+        with self._lock, self._connect() as conn:
+            rows = conn.execute(
+                """
+                SELECT m.mailbox_id, m.uid, m.internet_message_id, m.thread_key, m.sender,
+                       m.recipients_json, m.subject, m.sent_at, m.body_text, m.seen, m.synced_at,
+                       m.remote_id, m.remote_thread_id, m.connector, m.agent_priority, m.agent_category,
+                       m.agent_summary, m.needs_reply, m.analyzed_at
+                  FROM messages AS m
+                  JOIN agent_processing AS p
+                    ON p.mailbox_id=m.mailbox_id
+                   AND p.message_id=COALESCE(NULLIF(m.remote_id, ''), NULLIF(m.internet_message_id, ''), CAST(m.uid AS TEXT))
+                 WHERE m.mailbox_id=? AND m.seen=0 AND p.status='processed'
+                 ORDER BY p.processed_at ASC
+                 LIMIT ?
+                """,
+                (mailbox_id, limit),
+            ).fetchall()
+        return [self._message_row(row) for row in rows]
+
+    def attention_is_resolved(self, mailbox_id: str, message_id: str) -> bool:
+        with self._lock, self._connect() as conn:
+            row = conn.execute(
+                "SELECT status FROM message_attention WHERE mailbox_id=? AND message_id=?",
+                (mailbox_id, message_id),
+            ).fetchone()
+        return bool(row and row["status"] == "resolved")
+
     def list_attention(
         self,
         mailbox_id: str | None = None,

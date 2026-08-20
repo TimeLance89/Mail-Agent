@@ -231,12 +231,12 @@ def test_gateway_client_pause_preserves_existing_behavior(monkeypatch):
     assert result["behavior"]["enabled"] is False
 
 
-def test_gateway_snapshot_collects_recent_messages_for_desktop_priority_notifications(monkeypatch):
+def test_gateway_snapshot_collects_attention_feed_for_desktop_priority_notifications(monkeypatch):
     client = DesktopGatewayClient("http://127.0.0.1:8765")
 
     def fake_request(path, *, method="GET", payload=None):
         if path == "/v1/settings":
-            return {"behavior": {"enabled": True, "execution_mode": "live"}}
+            return {"behavior": {"enabled": True, "execution_mode": "shadow"}}
         if path == "/v1/agent/brain":
             return {"pending_total": 0}
         if path.startswith("/v1/approvals"):
@@ -245,15 +245,12 @@ def test_gateway_snapshot_collects_recent_messages_for_desktop_priority_notifica
             return {"drafts": []}
         if path == "/v1/system/health":
             return {"overall": "ok", "checks": []}
-        if path == "/v1/mailboxes":
-            return {"mailboxes": [{"mailbox_id": "mb1"}, {"mailbox_id": "mb2"}]}
-        if path == "/v1/mailboxes/mb1/messages?limit=50":
-            return {"messages": [{"mailbox_id": "mb1", "remote_id": "m1", "agent_priority": "high"}]}
-        if path == "/v1/mailboxes/mb2/messages?limit=50":
-            return {"messages": [{"mailbox_id": "mb2", "remote_id": "m2", "agent_priority": "normal"}]}
+        if path == "/v1/attention?limit=100":
+            return {"attention": [{"mailbox_id": "mb1", "remote_id": "m1", "agent_priority": "high", "attention_source": "shadow"}]}
         raise AssertionError(path)
 
     monkeypatch.setattr(client, "request", fake_request)
     snapshot = client.snapshot()
     messages = snapshot["health"]["_desktop_priority_messages"]
-    assert [item["remote_id"] for item in messages] == ["m1", "m2"]
+    assert [item["remote_id"] for item in messages] == ["m1"]
+    assert messages[0]["attention_source"] == "shadow"

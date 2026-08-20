@@ -135,9 +135,9 @@ class NotificationTracker:
         if "urgent" in priorities:
             title = "Dringende E-Mail erkannt"
             message = (
-                "Eine neue dringende Nachricht wartet in deiner Inbox."
+                "Eine neue dringende Nachricht wartet unter Handlungsbedarf."
                 if count == 1
-                else f"{count} neue wichtige Nachrichten warten in deiner Inbox."
+                else f"{count} neue wichtige Nachrichten warten unter Handlungsbedarf."
             )
         elif "security" in categories:
             title = "Sicherheitsrelevante E-Mail erkannt"
@@ -147,7 +147,7 @@ class NotificationTracker:
             message = (
                 "Eine wichtige Nachricht benötigt wahrscheinlich eine Antwort."
                 if needs_reply
-                else "Eine neue wichtige Nachricht wartet in deiner Inbox."
+                else "Eine neue wichtige Nachricht wartet unter Handlungsbedarf."
             )
         return DesktopNotification(title=title, message=message, view="attention")
 
@@ -313,24 +313,13 @@ class DesktopGatewayClient:
 
     def _priority_messages(self) -> list[dict[str, Any]]:
         try:
-            mailboxes = self.request("/v1/mailboxes").get("mailboxes", [])
+            return [
+                item
+                for item in self.request("/v1/attention?limit=100").get("attention", [])
+                if isinstance(item, dict)
+            ]
         except Exception:
             return []
-        messages: list[dict[str, Any]] = []
-        for mailbox in list(mailboxes)[:10]:
-            mailbox_id = str(mailbox.get("mailbox_id") or "")
-            if not mailbox_id:
-                continue
-            try:
-                payload = self.request(
-                    f"/v1/mailboxes/{mailbox_id}/messages?limit=50"
-                )
-            except Exception:
-                continue
-            messages.extend(
-                item for item in payload.get("messages", []) if isinstance(item, dict)
-            )
-        return messages
 
     def snapshot(self) -> dict[str, Any]:
         settings = self.request("/v1/settings")

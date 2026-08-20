@@ -19,6 +19,7 @@ from mail_agent_core.models import (
     MailActionType,
     MailCategory,
     MailHandlingAction,
+    MailPriority,
     RuleMode,
 )
 from mail_agent_core.shadow import ShadowReportStore
@@ -870,6 +871,63 @@ class AgentRuntime:
         self.audit_log.append("agent_shadow_cycle_completed", details=summary)
         return summary
 
+
+    async def _reconcile_processed_read(
+        self,
+        mailbox_id: str,
+        *,
+        behavior: AgentBehaviorSettings,
+        profile: AgentProfile,
+        limit: int = 100,
+    ) -> tuple[int, int]:
+        if not behavior.mark_processed_read or self.action_executor is None:
+            return 0, 0
+        marked = 0
+        errors = 0
+        for item in self.mail_store.list_processed_unread(mailbox_id, limit=limit):
+            message_id = str(item.get("remote_id") or item.get("internet_message_id") or item.get("uid"))
+            try:
+                priority = MailPriority(str(item.get("agent_priority") or MailPriority.NORMAL.value))
+            except ValueError:
+                priority = MailPriority.NORMAL
+            try:
+                category = MailCategory(str(item.get("agent_category") or MailCategory.OTHER.value))
+            except ValueError:
+                category = MailCategory.OTHER
+            rule_mode, _priority, _category = apply_rule_overrides(
+                sender=str(item.get("sender") or ""),
+                settings=behavior,
+                priority=priority,
+                category=category,
+            )
+            if rule_mode in {RuleMode.ANALYZE_ONLY, RuleMode.IGNORE}:
+                continue
+            proposal = MailActionProposal(
+                action=MailActionType.MARK_READ,
+                mailbox_id=mailbox_id,
+                message_id=message_id,
+                thread_id=str(item.get("thread_key") or "") or None,
+                confidence=1.0,
+                reason="Besitzer-Einstellung: erfolgreich bearbeitete Mail als gelesen markieren.",
+            )
+            policy = self.mail_agent.policy_engine.evaluate(profile, proposal)
+            if not policy.allowed or policy.requires_approval:
+                continue
+            try:
+                await self.action_executor.execute_direct(proposal)
+                marked += 1
+            except Exception as exc:
+                errors += 1
+                self.audit_log.append(
+                    "agent_postprocess_mark_read_failed",
+                    details={
+                        "mailbox_id": mailbox_id,
+                        "message_id": message_id,
+                        "error": str(exc),
+                    },
+                )
+        return marked, errors
+
     async def run_mailbox(self, mailbox_id: str, *, force: bool = False) -> dict[str, Any]:
         config = self._configuration()
         behavior = self.behavior(config)
@@ -981,37 +1039,6 @@ class AgentRuntime:
                     proposal_action=proposal.get("action"),
                     confidence=float(proposal.get("confidence") or 0.0),
                 )
-                if (
-                    behavior.mark_processed_read
-                    and result.get("confidence_accepted")
-                    and result.get("rule_mode") not in {RuleMode.ANALYZE_ONLY.value, RuleMode.IGNORE.value}
-                    and self.action_executor is not None
-                ):
-                    source_after = self.mail_store.get_message(mailbox_id, context.message_id)
-                    if source_after is not None and not source_after.get("seen"):
-                        read_proposal = MailActionProposal(
-                            action=MailActionType.MARK_READ,
-                            mailbox_id=mailbox_id,
-                            message_id=context.message_id,
-                            thread_id=context.thread_id,
-                            confidence=1.0,
-                            reason="Besitzer-Einstellung: erfolgreich bearbeitete Mail als gelesen markieren.",
-                        )
-                        read_policy = self.mail_agent.policy_engine.evaluate(profile, read_proposal)
-                        if read_policy.allowed and not read_policy.requires_approval:
-                            try:
-                                await self.action_executor.execute_direct(read_proposal)
-                                marked_read += 1
-                            except Exception as post_exc:
-                                postprocess_errors += 1
-                                self.audit_log.append(
-                                    "agent_postprocess_mark_read_failed",
-                                    details={
-                                        "mailbox_id": mailbox_id,
-                                        "message_id": context.message_id,
-                                        "error": str(post_exc),
-                                    },
-                                )
                 processed += 1
             except Exception as exc:
                 errors += 1
@@ -1030,6 +1057,9 @@ class AgentRuntime:
                     },
                 )
 
+        marked_read, postprocess_errors = await self._reconcile_processed_read(
+            mailbox_id, behavior=behavior, profile=profile, limit=100
+        )
         pending_after = self.work_queue.pending_count(mailbox_id)
         summary = {
             "mailbox_id": mailbox_id,
