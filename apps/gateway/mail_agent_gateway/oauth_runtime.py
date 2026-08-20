@@ -14,6 +14,7 @@ from .state import JsonStateStore
 from .vault import CredentialVault
 
 OAuthProvider = Literal["google", "microsoft"]
+OAuthPurpose = Literal["mail", "calendar"]
 
 
 @dataclass
@@ -24,6 +25,7 @@ class OAuthSession:
     redirect_uri: str
     created_at: float
     login_hint: str | None = None
+    purpose: OAuthPurpose = "mail"
     status: str = "pending"
     mailbox_id: str | None = None
     email_address: str | None = None
@@ -33,6 +35,7 @@ class OAuthSession:
         return {
             "state": self.state,
             "provider": self.provider,
+            "purpose": self.purpose,
             "status": self.status,
             "mailbox_id": self.mailbox_id,
             "email_address": self.email_address,
@@ -53,6 +56,7 @@ class OAuthSessionStore:
         code_verifier: str,
         redirect_uri: str,
         login_hint: str | None = None,
+        purpose: OAuthPurpose = "mail",
     ) -> OAuthSession:
         self.cleanup()
         session = OAuthSession(
@@ -62,6 +66,7 @@ class OAuthSessionStore:
             redirect_uri=redirect_uri,
             created_at=time.time(),
             login_hint=login_hint,
+            purpose=purpose,
         )
         with self._lock:
             self._items[session.state] = session
@@ -159,6 +164,15 @@ async def current_google_access_token(
         raise RuntimeError("Google refresh token is unavailable; reconnect the mailbox")
     client = GoogleOAuthClient(client_id, client_secret)
     tokens = await client.refresh(refresh_token)
+    previous_scope = str(token_data.get("scope") or mailbox.get("scope") or "").strip()
+    if previous_scope and not tokens.scope:
+        tokens = GoogleTokenSet(
+            access_token=tokens.access_token,
+            refresh_token=tokens.refresh_token,
+            expires_at=tokens.expires_at,
+            scope=previous_scope,
+            token_type=tokens.token_type,
+        )
     token_vault.save_google(mailbox["mailbox_id"], tokens)
     return tokens.access_token
 
