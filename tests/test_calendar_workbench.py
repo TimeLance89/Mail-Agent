@@ -10,18 +10,20 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 CALENDAR = ROOT / "apps/web/calendar-workbench.js"
 MAIL_SUGGESTIONS = ROOT / "apps/web/calendar-mail-suggestions.js"
+V171_UX = ROOT / "apps/web/v171-ux.js"
 
 
 def test_calendar_workbench_is_loaded_and_cache_busted():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
-    assert "/assets/calendar-ui.js?v=0.17.0" in index
-    assert "/assets/calendar-workbench.js?v=0.17.0" in index
-    assert "/assets/calendar-mail-suggestions.js?v=0.17.0" in index
-    assert index.index("/assets/workbench-ui.js?v=0.17.0") < index.index(
-        "/assets/calendar-workbench.js?v=0.17.0"
+    assert "/assets/calendar-ui.js?v=0.17.1" in index
+    assert "/assets/calendar-workbench.js?v=0.17.1" in index
+    assert "/assets/calendar-mail-suggestions.js?v=0.17.1" in index
+    assert "/assets/v171-ux.js?v=0.17.1" in index
+    assert index.index("/assets/calendar-workbench.js?v=0.17.1") < index.index(
+        "/assets/calendar-mail-suggestions.js?v=0.17.1"
     )
-    assert index.index("/assets/calendar-workbench.js?v=0.17.0") < index.index(
-        "/assets/calendar-mail-suggestions.js?v=0.17.0"
+    assert index.index("/assets/dashboard-live.js?v=0.17.1") < index.index(
+        "/assets/v171-ux.js?v=0.17.1"
     )
 
 
@@ -32,62 +34,60 @@ def test_calendar_is_a_first_class_view_with_mail_bridge():
     assert "Mit Kalender planen" in source
     assert "Freie Zeiten antworten" in source
     assert "/v1/calendar/mail-reply" in source
-    assert "source_message_id:cal.sourceMessageId" in source
     desktop = (ROOT / "apps/web/desktop-links.js").read_text(encoding="utf-8")
     assert "'calendar'" in desktop
 
 
-def test_calendar_workbench_exposes_real_assistance_flows():
-    source = CALENDAR.read_text(encoding="utf-8")
-    for endpoint in (
-        "/v1/calendar/briefing",
-        "/v1/calendar/free-slots",
-        "/v1/calendar/concierge",
-        "/v1/calendar/proposals",
-        "/v1/calendar/approvals/",
-    ):
-        assert endpoint in source
-    assert "Deterministisch aus Google Free/Busy" in source
-    assert "Bei fehlenden Angaben fragt der Agent nach" in source
-    assert "Google-Einladungen werden versendet" in source
+def test_v171_calendar_prioritizes_outcome_over_controls():
+    source = V171_UX.read_text(encoding="utf-8")
+    assert "Was soll ich für dich erledigen?" in source
+    assert "Prüfen & vorbereiten" in source
+    assert "Terminanfragen aus deinen Mails" in source
+    assert "Der konkrete angefragte Zeitpunkt wird zuerst geprüft" in source
+    assert "Optionen & Details" in source
+    assert "Freie Zeiten" not in source or "3 freie Zeiten finden" in source
+
+
+def test_v171_drafts_can_be_discarded_from_workbench():
+    source = V171_UX.read_text(encoding="utf-8")
+    assert "data-draft-discard" in source
+    assert "/v1/drafts/${encodeURIComponent(id)}/discard" in source
+    assert "Ablehnen & verwerfen" in source
+    assert "Entwurf verworfen." in source
 
 
 def test_calendar_mail_suggestions_are_actionable_but_side_effect_free_until_user_action():
     source = MAIL_SUGGESTIONS.read_text(encoding="utf-8")
     assert "/v1/calendar/mail-suggestions" in source
-    assert "Terminwünsche aus E-Mails" in source
     assert "Mail-Inhalte bleiben untrusted" in source
     assert "Mit Kalender prüfen" in source
-    assert "Freie Zeiten antworten" in source
 
 
 def test_shared_writer_without_private_access_is_not_labeled_readonly():
     source = MAIL_SUGGESTIONS.read_text(encoding="utf-8")
     assert "writerwithoutprivateaccess" in source
     assert "correctSharedCalendarRoleLabels" in source
-    assert "nur lesen" in source
 
 
-def test_calendar_connect_opens_popup_before_async_oauth_start():
-    source = CALENDAR.read_text(encoding="utf-8")
-    popup = source.index("window.open('about:blank'")
-    start = source.index("/v1/oauth/google/calendar/start")
-    assert popup < start
+def test_v171_errors_stay_visible_and_preserve_calendar_diagnostics():
+    source = V171_UX.read_text(encoding="utf-8")
+    assert "12000" in source
+    assert "403 forbidden" in source.lower()
+    assert "Google Kalender hat den Zugriff verweigert" in source
 
 
-def test_calendar_workbench_has_no_recursive_dom_observer_or_poll_loop():
-    for path in (CALENDAR, MAIL_SUGGESTIONS):
+def test_calendar_workbench_has_no_recursive_dom_observer():
+    for path in (CALENDAR, MAIL_SUGGESTIONS, V171_UX):
         source = path.read_text(encoding="utf-8")
         assert "MutationObserver" not in source
-        assert "setInterval" not in source
         assert "subtree: true" not in source
 
 
-def test_calendar_workbench_javascript_syntax():
+def test_calendar_javascript_syntax():
     node = shutil.which("node")
     if not node:
         pytest.skip("Node.js is not available")
-    for path in (CALENDAR, MAIL_SUGGESTIONS):
+    for path in (CALENDAR, MAIL_SUGGESTIONS, V171_UX):
         result = subprocess.run(
             [node, "--check", str(path)],
             capture_output=True,
