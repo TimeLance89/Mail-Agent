@@ -284,5 +284,27 @@ async def usage_privacy_contract() -> dict[str, Any]:
     }
 
 
+def _move_catch_all_web_mount_to_end() -> None:
+    """Keep APIs registered after the legacy composition root reachable.
+
+    The base gateway mounts StaticFiles at `/` after all 0.15 routes. 0.16 routes are intentionally
+    additive and are therefore registered later. Starlette matches routes in order, so the catch-all
+    web mount would otherwise intercept `/v1/adaptive/*` and return a static 404. Moving only the
+    named catch-all mount to the end preserves the existing web bundle while keeping all API routes
+    ahead of it.
+    """
+
+    routes = base.app.router.routes
+    for index, route in enumerate(routes):
+        if getattr(route, "name", None) != "web":
+            continue
+        if getattr(route, "path", None) not in {"", "/"}:
+            continue
+        routes.append(routes.pop(index))
+        break
+
+
+_move_catch_all_web_mount_to_end()
+
 # Export the augmented application for uvicorn/PyInstaller.
 app = base.app
