@@ -125,10 +125,24 @@ class ReleaseModelRouter(ModelRouter):
         return ModelEndpoint(provider="ollama", model=chosen)
 
     async def route(self, role: str) -> RouteChoice:
+        primary = self.primary()
         if role in _FORCED_PRIMARY_ROLES.get():
-            primary = self.primary()
             return RouteChoice(role, primary.provider_name, primary.model, "runtime_fallback")
-        return await super().route(role)
+
+        routing = self.settings()
+        # Overrides are retained while automatic mode is active, but deliberately dormant. This
+        # lets the owner switch back to Expert without losing configuration while keeping Automatic
+        # genuinely automatic.
+        if routing.mode == "expert":
+            endpoint = getattr(routing, role, None)
+            if endpoint is not None and await self._endpoint_available(endpoint):
+                return RouteChoice(role, endpoint.provider, endpoint.model, "expert_override")
+
+        if routing.mode == "automatic" and role == "classification":
+            local = await self._auto_local()
+            if local is not None:
+                return RouteChoice(role, local.provider, local.model, "automatic_local")
+        return RouteChoice(role, primary.provider_name, primary.model, "primary_fallback")
 
 
 class ReleaseOwnerProfileStore(OwnerProfileStore):
