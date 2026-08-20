@@ -1,6 +1,10 @@
 from __future__ import annotations
 
-from mail_agent_gateway.adaptive_intelligence import CodexUsageReader
+import asyncio
+import json
+
+from mail_agent_gateway import codex_usage_reader as usage_module
+from mail_agent_gateway.codex_usage_reader import CodexUsageReader
 
 
 def test_codex_rate_limit_parser_marks_provider_reported_values():
@@ -57,3 +61,68 @@ def test_codex_rate_limit_parser_returns_unknown_when_snapshot_is_not_structured
     assert CodexUsageReader._normalize_rate_limits(None) is None
     assert CodexUsageReader._normalize_rate_limits("73%") is None
     assert CodexUsageReader._normalize_rate_limits([]) is None
+
+
+def test_codex_app_server_waits_for_initialize_response_before_account_rpcs(monkeypatch):
+    state = {"init_read": False, "writes": []}
+
+    class FakeStdin:
+        def write(self, raw: bytes):
+            message = json.loads(raw.decode())
+            state["writes"].append(message)
+            if message.get("method") == "initialized" and not state["init_read"]:
+                raise AssertionError("initialized sent before initialize response was read")
+
+        async def drain(self):
+            return None
+
+    class FakeStdout:
+        def __init__(self):
+            self.calls = 0
+
+        async def readline(self):
+            self.calls += 1
+            if self.calls == 1:
+                state["init_read"] = True
+                return b'{"id":"mail-agent-init","result":{"userAgent":"codex"}}\n'
+            if self.calls == 2:
+                return b'{"id":"mail-agent-rate","result":{"rateLimits":{"primary":{"usedPercent":25}}}}\n'
+            if self.calls == 3:
+                return b'{"id":"mail-agent-usage","result":{"summary":{"lifetimeTokens":123}}}\n'
+            return b""
+
+    class FakeProc:
+        def __init__(self):
+            self.stdin = FakeStdin()
+            self.stdout = FakeStdout()
+            self.stderr = None
+            self.returncode = None
+
+        def terminate(self):
+            self.returncode = 0
+
+        def kill(self):
+            self.returncode = -9
+
+        async def wait(self):
+            return self.returncode
+
+    class FakeProvider:
+        def _command(self, *_args):
+            return ["codex", "app-server"]
+
+    async def fake_create(*_args, **_kwargs):
+        return FakeProc()
+
+    monkeypatch.setattr(usage_module.asyncio, "create_subprocess_exec", fake_create)
+    rate, usage, error = asyncio.run(CodexUsageReader(FakeProvider())._rpc())
+
+    assert error is None
+    assert rate["rateLimits"]["primary"]["usedPercent"] == 25
+    assert usage["summary"]["lifetimeTokens"] == 123
+    assert [item["method"] for item in state["writes"]] == [
+        "initialize",
+        "initialized",
+        "account/rateLimits/read",
+        "account/usage/read",
+    ]
