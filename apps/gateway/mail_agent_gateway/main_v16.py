@@ -11,7 +11,6 @@ from . import sync as sync_module
 from .adaptive_intelligence import (
     AdaptiveMailAgent,
     AdaptiveSignalStore,
-    CodexUsageReader,
     ModelRouter,
     ModelRoutingRequest,
     OwnerProfileConsentRequest,
@@ -21,6 +20,7 @@ from .adaptive_intelligence import (
     OwnerProfileStore,
     extract_rfc822_signals,
 )
+from .codex_usage_reader import CodexUsageReader
 from .decision_provenance import normalize_decision_path
 from .oauth_runtime import current_google_access_token, current_microsoft_access_token
 
