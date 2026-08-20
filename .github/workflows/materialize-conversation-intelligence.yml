@@ -1,0 +1,39 @@
+name: Materialize Conversation Intelligence
+
+on:
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+
+permissions:
+  contents: write
+
+jobs:
+  materialize:
+    if: github.head_ref == 'feature/conversation-intelligence-0.15.0'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.head_ref }}
+          fetch-depth: 0
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Apply product changes
+        run: python tools/apply_conversation_intelligence_015.py
+      - name: Validate generated Python
+        run: |
+          python -m compileall -q apps/gateway packages/agent_core connectors tests
+          git diff --check
+      - name: Commit materialized product files
+        run: |
+          git config user.name "MAIL-AGENT CI"
+          git config user.email "actions@users.noreply.github.com"
+          git add apps packages connectors packaging pyproject.toml tests
+          if git diff --cached --quiet; then
+            echo "No product changes to commit"
+            exit 0
+          fi
+          git commit -m "feat: conversation intelligence 0.15.0"
+          git push origin HEAD:${{ github.head_ref }}
