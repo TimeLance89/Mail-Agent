@@ -72,8 +72,27 @@
     if (typeof showNotice === 'function') showNotice('Mail als untrusted Kalender-Kontext übernommen.');
   }
 
+  function correctSharedCalendarRoleLabels() {
+    const calendar = window.__mailAgentCalendar;
+    const select = document.getElementById('cw-calendar');
+    if (!calendar || !select) return;
+    const roles = new Map(
+      (calendar.calendars || []).map(item => [
+        String(item.id || ''),
+        String(item.access_role || '').toLowerCase(),
+      ])
+    );
+    const writable = new Set(['owner', 'writer', 'writerwithoutprivateaccess']);
+    [...select.options].forEach(option => {
+      if (writable.has(roles.get(String(option.value)) || '')) {
+        option.textContent = option.textContent.replace(/\s*·\s*nur lesen\s*$/, '');
+      }
+    });
+  }
+
   async function mountSuggestions() {
     if (activeView !== 'calendar') return;
+    correctSharedCalendarRoleLabels();
     const shell=document.querySelector('.cw-shell');
     if(!shell || shell.querySelector('#cw-mail-suggestions')) return;
     const mailbox=dashboard.mailboxes?.[0];
@@ -98,6 +117,9 @@
   const previousRenderDashboard=renderDashboard;
   renderDashboard=function calendarMailAwareRenderDashboard(){
     previousRenderDashboard();
-    if(activeView==='calendar')window.setTimeout(mountSuggestions,0);
+    if(activeView==='calendar'){
+      correctSharedCalendarRoleLabels();
+      window.setTimeout(mountSuggestions,0);
+    }
   };
 })();
