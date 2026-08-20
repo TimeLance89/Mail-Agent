@@ -268,18 +268,12 @@ async def usage_summary(days: int = 7) -> dict[str, Any]:
             "rate_limits": None,
             "account_usage": None,
         }
-    local = signal_store.summary(days=days)
-    today = signal_store.summary(days=1)
-    # `summary(days=1)` is a rolling 24h window. Expose the already-computed UTC calendar-day
-    # counters under the generic fields used by the UI so "Heute" cannot include yesterday.
-    today["llm_calls"] = today.get("today_llm_calls", 0)
-    today["decision_events"] = today.get("today_events", 0)
     return {
         "configured_provider": configuration.get("provider"),
         "configured_model": configuration.get("model"),
         "model_routing": model_router.settings().model_dump(mode="json"),
-        "local": local,
-        "today": today,
+        "local": signal_store.summary(days=days),
+        "today": signal_store.calendar_day_summary(),
         "codex": codex,
         "semantics": {
             "provider_reported": "Vom Provider/CLI gemeldeter Wert",
