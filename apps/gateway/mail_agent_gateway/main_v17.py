@@ -20,6 +20,7 @@ base = previous.base
 # 0.17 adds Calendar as a capability on top of the fully verified 0.16.1 runtime. The existing
 # policy engine, mail approval queue, action executor, identity and adaptive mail reasoning remain
 # authoritative and untouched.
+previous.APP_VERSION = APP_VERSION
 base.APP_VERSION = APP_VERSION
 base.app.version = APP_VERSION
 
