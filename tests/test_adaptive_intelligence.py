@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 from pathlib import Path
 
@@ -203,8 +204,6 @@ def test_deterministic_bulk_classification_skips_llm_and_records_provenance(tmp_
         owner_profile=OwnerProfileStore(tmp_path / "profile.json"),
     )
 
-    result = pytest.run(asyncio=False) if False else None
-
     async def run():
         return await agent.analyze(
             profile=_profile(),
@@ -215,7 +214,7 @@ def test_deterministic_bulk_classification_skips_llm_and_records_provenance(tmp_
             sign_payload=identity_manager.sign,
         )
 
-    analysis = __import__("asyncio").run(run())
+    analysis = asyncio.run(run())
 
     assert provider.calls == 0
     assert analysis.proposal.action == MailActionType.ARCHIVE
@@ -253,7 +252,7 @@ def test_uncertain_mail_falls_back_to_configured_llm(tmp_path: Path):
             sign_payload=identity_manager.sign,
         )
 
-    analysis = __import__("asyncio").run(run())
+    analysis = asyncio.run(run())
 
     assert provider.calls == 1
     assert analysis.proposal.metadata["decision_origin"] == "llm"
@@ -277,7 +276,7 @@ def test_model_router_expert_override_and_fallback(tmp_path: Path):
     async def run():
         return await router.route("classification"), await router.route("complex"), await router.route("normal")
 
-    classification, complex_route, normal = __import__("asyncio").run(run())
+    classification, complex_route, normal = asyncio.run(run())
 
     assert classification.provider_name == "ollama"
     assert classification.model == "small-local"
@@ -317,15 +316,12 @@ def test_accepted_sender_pattern_is_owner_confirmed_before_deterministic_use(tmp
     before = classifier.classify(message, behavior)
     assert before.decisive is False
 
-    with conversations._connect() as conn:  # noqa: SLF001 - test verifies owner-decision contract
-        conn.execute(
-            """
-            INSERT INTO sender_pattern_decisions(
-                mailbox_id, sender, category, status, decided_at, decided_by
-            ) VALUES (?, ?, ?, 'accepted', ?, 'local-user')
-            """,
-            ("mb", "news@example.test", "newsletter", "2026-08-20T09:00:00+00:00"),
-        )
+    conversations.decide_pattern(
+        "mb",
+        "news@example.test",
+        "newsletter",
+        status="accepted",
+    )
 
     after = classifier.classify(message, behavior)
     assert after.decisive is True
