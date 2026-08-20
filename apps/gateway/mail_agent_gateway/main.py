@@ -39,6 +39,7 @@ from .registry_client import RegistryClient
 from .schemas import (
     AgentAnalyzeRequest,
     AgentRunRequest,
+    AttentionResolveRequest,
     BehaviorSettingsRequest,
     BrainUpdateRequest,
     DraftSubmitRequest,
@@ -287,7 +288,7 @@ async def lifespan(_: FastAPI):
                 await task
 
 
-APP_VERSION = "0.13.0"
+APP_VERSION = "0.13.8"
 update_client = UpdateClient(
     feed_url=settings.update_feed_url,
     release_page=settings.update_release_page,
@@ -1104,6 +1105,85 @@ async def run_agent_cycle(body: AgentRunRequest) -> dict:
 @app.get("/v1/audit")
 async def recent_audit(limit: int = 100) -> dict:
     return {"events": audit_log.read_recent(limit)}
+
+
+
+@app.get("/v1/attention")
+async def list_attention(mailbox_id: str | None = None, limit: int = 100) -> dict:
+    _state, config = _configuration_or_409()
+    limit = max(1, min(int(limit), 500))
+    items = list(mail_store.list_attention(mailbox_id, limit))
+    seen_keys = {
+        (str(item.get("mailbox_id") or ""), str(item.get("remote_id") or item.get("internet_message_id") or item.get("uid") or ""))
+        for item in items
+    }
+    behavior = AgentBehaviorSettings.model_validate(config.get("behavior") or {})
+    if behavior.execution_mode == AgentExecutionMode.SHADOW:
+        reports = agent_runtime.shadow_reports.recent_reports(20, mailbox_id=mailbox_id)
+        for report in reports:
+            report_mailbox = str(report.get("mailbox_id") or "")
+            for result in report.get("results", []) or []:
+                message_id = str(result.get("message_id") or "")
+                key = (report_mailbox, message_id)
+                if not report_mailbox or not message_id or key in seen_keys:
+                    continue
+                priority = str(result.get("priority") or "normal")
+                category = str(result.get("category") or "other")
+                needs_reply = result.get("needs_reply") is True
+                if not (needs_reply or priority in {"high", "urgent"} or category == "security"):
+                    continue
+                if mail_store.attention_is_resolved(report_mailbox, message_id):
+                    seen_keys.add(key)
+                    continue
+                source = mail_store.get_message(report_mailbox, message_id)
+                if source is None:
+                    continue
+                item = dict(source)
+                item.update(
+                    {
+                        "agent_priority": priority,
+                        "agent_category": category,
+                        "agent_summary": str(result.get("reason") or "Shadow-Analyse: Aufmerksamkeit empfohlen."),
+                        "needs_reply": needs_reply,
+                        "analyzed_at": report.get("finished_at"),
+                        "attention_status": "open",
+                        "attention_source": "shadow",
+                    }
+                )
+                items.append(item)
+                seen_keys.add(key)
+                if len(items) >= limit:
+                    break
+            if len(items) >= limit:
+                break
+    rank = {"urgent": 0, "high": 1, "normal": 2, "low": 3}
+    items.sort(
+        key=lambda item: (
+            rank.get(str(item.get("agent_priority") or "normal"), 4),
+            0 if item.get("needs_reply") is True else 1,
+            str(item.get("analyzed_at") or item.get("sent_at") or ""),
+        )
+    )
+    return {"attention": items[:limit]}
+
+
+@app.post("/v1/attention/resolve")
+async def resolve_attention(body: AttentionResolveRequest) -> dict:
+    _configuration_or_409()
+    try:
+        item = mail_store.resolve_attention(
+            body.mailbox_id,
+            body.message_id,
+            owner_note=body.owner_note,
+        )
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Attention message not found") from exc
+    audit_log.append(
+        "owner_attention_resolved",
+        actor=body.actor,
+        details={"mailbox_id": body.mailbox_id, "message_id": body.message_id},
+    )
+    return item
 
 
 @app.get("/v1/drafts")

@@ -52,9 +52,16 @@ class MailCategory(StrEnum):
     SUPPORT = "support"
     SALES = "sales"
     NEWSLETTER = "newsletter"
+    ADVERTISING = "advertising"
     NOTIFICATION = "notification"
     SECURITY = "security"
     OTHER = "other"
+
+
+class MailHandlingAction(StrEnum):
+    NONE = "none"
+    MARK_READ = "mark_read"
+    ARCHIVE = "archive"
 
 
 class RuleMode(StrEnum):
@@ -96,6 +103,9 @@ class AgentBehaviorSettings(BaseModel):
     auto_create_drafts: bool = True
     auto_mark_read: bool = False
     auto_archive_low_priority: bool = False
+    mark_processed_read: bool = True
+    newsletter_action: MailHandlingAction = MailHandlingAction.NONE
+    advertising_action: MailHandlingAction = MailHandlingAction.NONE
     minimum_confidence: float = Field(default=0.72, ge=0.0, le=1.0)
     max_messages_per_cycle: int = Field(default=20, ge=1, le=200)
     thread_context_messages: int = Field(default=8, ge=0, le=30)

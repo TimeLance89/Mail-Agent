@@ -50,7 +50,7 @@ def test_restart_helper_requires_the_new_gateway_to_be_healthy():
 def test_inno_installer_passes_version_and_restart_mode_to_verifier():
     source = INSTALLER.read_text(encoding="utf-8")
 
-    assert '#define MyAppVersion "0.13.7"' in source
+    assert '#define MyAppVersion "0.13.8"' in source
     assert '""{#MyAppVersion}"" ""open-browser"""' in source
     assert '""{#MyAppVersion}"" ""no-browser"""' in source
     assert "postinstall skipifsilent" in source
@@ -58,7 +58,7 @@ def test_inno_installer_passes_version_and_restart_mode_to_verifier():
 
 
 class _HealthHandler(BaseHTTPRequestHandler):
-    version = "0.13.7"
+    version = "0.13.8"
 
     def do_GET(self):  # noqa: N802 - stdlib callback name
         if self.path != "/health":
@@ -93,7 +93,7 @@ def test_restart_helper_accepts_only_expected_healthy_version(tmp_path: Path):
     # server represents the newly started packaged gateway and lets CI exercise the real CMD +
     # Windows PowerShell health/version verification path.
     command_line = subprocess.list2cmdline(
-        [str(RESTART_HELPER), str(sys.executable), "0.13.7", "no-browser"]
+        [str(RESTART_HELPER), str(sys.executable), "0.13.8", "no-browser"]
     )
     try:
         result = subprocess.run(
@@ -112,6 +112,6 @@ def test_restart_helper_accepts_only_expected_healthy_version(tmp_path: Path):
     assert result.returncode == 0, result.stdout + result.stderr
     log = tmp_path / "local" / "Mail-Agent" / "logs" / "update-restart.log"
     assert log.exists()
-    assert "Gateway is reachable with expected version 0.13.7" in log.read_text(
+    assert "Gateway is reachable with expected version 0.13.8" in log.read_text(
         encoding="utf-8", errors="replace"
     )

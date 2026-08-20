@@ -17,6 +17,9 @@ from mail_agent_core.models import (
     AgentProfile,
     MailActionProposal,
     MailActionType,
+    MailCategory,
+    MailHandlingAction,
+    MailPriority,
     RuleMode,
 )
 from mail_agent_core.shadow import ShadowReportStore
@@ -334,6 +337,20 @@ class AgentRuntime:
             )
             analysis.proposal.priority = priority
             analysis.proposal.category = category
+
+            category_action = MailHandlingAction.NONE
+            if rule_mode == RuleMode.NORMAL:
+                if category == MailCategory.NEWSLETTER:
+                    category_action = behavior.newsletter_action
+                elif category == MailCategory.ADVERTISING:
+                    category_action = behavior.advertising_action
+            if category_action != MailHandlingAction.NONE:
+                metadata = dict(analysis.proposal.metadata)
+                metadata["deterministic_category_handling"] = category.value
+                metadata["model_proposed_action"] = analysis.proposal.action.value
+                analysis.proposal.metadata = metadata
+                analysis.proposal.action = MailActionType(category_action.value)
+                analysis.policy = self.mail_agent.policy_engine.evaluate(profile, analysis.proposal)
 
             if rule_mode == RuleMode.DRAFT_ONLY and analysis.proposal.action in {
                 MailActionType.SEND_REPLY,
@@ -854,10 +871,67 @@ class AgentRuntime:
         self.audit_log.append("agent_shadow_cycle_completed", details=summary)
         return summary
 
+
+    async def _reconcile_processed_read(
+        self,
+        mailbox_id: str,
+        *,
+        behavior: AgentBehaviorSettings,
+        profile: AgentProfile,
+        limit: int = 100,
+    ) -> tuple[int, int]:
+        if not behavior.mark_processed_read or self.action_executor is None:
+            return 0, 0
+        marked = 0
+        errors = 0
+        for item in self.mail_store.list_processed_unread(mailbox_id, limit=limit):
+            message_id = str(item.get("remote_id") or item.get("internet_message_id") or item.get("uid"))
+            try:
+                priority = MailPriority(str(item.get("agent_priority") or MailPriority.NORMAL.value))
+            except ValueError:
+                priority = MailPriority.NORMAL
+            try:
+                category = MailCategory(str(item.get("agent_category") or MailCategory.OTHER.value))
+            except ValueError:
+                category = MailCategory.OTHER
+            rule_mode, _priority, _category = apply_rule_overrides(
+                sender=str(item.get("sender") or ""),
+                settings=behavior,
+                priority=priority,
+                category=category,
+            )
+            if rule_mode in {RuleMode.ANALYZE_ONLY, RuleMode.IGNORE}:
+                continue
+            proposal = MailActionProposal(
+                action=MailActionType.MARK_READ,
+                mailbox_id=mailbox_id,
+                message_id=message_id,
+                thread_id=str(item.get("thread_key") or "") or None,
+                confidence=1.0,
+                reason="Besitzer-Einstellung: erfolgreich bearbeitete Mail als gelesen markieren.",
+            )
+            policy = self.mail_agent.policy_engine.evaluate(profile, proposal)
+            if not policy.allowed or policy.requires_approval:
+                continue
+            try:
+                await self.action_executor.execute_direct(proposal)
+                marked += 1
+            except Exception as exc:
+                errors += 1
+                self.audit_log.append(
+                    "agent_postprocess_mark_read_failed",
+                    details={
+                        "mailbox_id": mailbox_id,
+                        "message_id": message_id,
+                        "error": str(exc),
+                    },
+                )
+        return marked, errors
+
     async def run_mailbox(self, mailbox_id: str, *, force: bool = False) -> dict[str, Any]:
         config = self._configuration()
         behavior = self.behavior(config)
-        self._ensure_brain(config)
+        _, profile = self._ensure_brain(config)
         queue = (
             self.shadow_queue
             if behavior.execution_mode == AgentExecutionMode.SHADOW
@@ -904,6 +978,8 @@ class AgentRuntime:
         executed = 0
         below_confidence = 0
         errors = 0
+        marked_read = 0
+        postprocess_errors = 0
         provider_name = str(config.get("provider") or "")
         model = str(config.get("model") or "")
         for item in messages:
@@ -981,6 +1057,9 @@ class AgentRuntime:
                     },
                 )
 
+        marked_read, postprocess_errors = await self._reconcile_processed_read(
+            mailbox_id, behavior=behavior, profile=profile, limit=100
+        )
         pending_after = self.work_queue.pending_count(mailbox_id)
         summary = {
             "mailbox_id": mailbox_id,
@@ -993,6 +1072,8 @@ class AgentRuntime:
             "executed": executed,
             "below_confidence": below_confidence,
             "errors": errors,
+            "marked_read": marked_read,
+            "postprocess_errors": postprocess_errors,
             "pending_before": pending_before,
             "pending_after": pending_after,
         }

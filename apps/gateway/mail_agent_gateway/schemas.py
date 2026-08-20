@@ -60,6 +60,13 @@ class LearningDecisionRequest(BaseModel):
     actor: str = Field(default="local-user", min_length=1, max_length=200)
 
 
+class AttentionResolveRequest(BaseModel):
+    mailbox_id: str = Field(min_length=1, max_length=128)
+    message_id: str = Field(min_length=1, max_length=1024)
+    owner_note: str | None = Field(default=None, max_length=4000)
+    actor: str = Field(default="local-user", min_length=1, max_length=200)
+
+
 class AgentRunRequest(BaseModel):
     mailbox_id: str | None = Field(default=None, max_length=128)
     force: bool = False

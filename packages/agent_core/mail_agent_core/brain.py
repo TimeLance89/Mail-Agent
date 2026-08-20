@@ -198,6 +198,8 @@ class AgentBrain:
             "executed",
             "below_confidence",
             "errors",
+            "marked_read",
+            "postprocess_errors",
             "pending_before",
             "pending_after",
             "skipped",
