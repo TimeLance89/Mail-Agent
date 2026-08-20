@@ -52,15 +52,15 @@ def test_release_version_is_synchronized_for_0139():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
     workflow = (ROOT / ".github/workflows/build-installers.yml").read_text(encoding="utf-8")
 
-    assert 'version = "0.14.0"' in pyproject
-    assert 'APP_VERSION = "0.14.0"' in gateway
-    assert 'APP_VERSION = "0.14.0"' in launcher
-    assert 'app_version: str = "0.14.0"' in identity
-    assert '#define MyAppVersion "0.14.0"' in installer
-    assert "const APP_VERSION = '0.14.0'" in desktop
-    assert "/assets/startup-rescue.js?v=0.14.0" in index
-    assert "/assets/desktop-links.js?v=0.14.0" in index
-    assert "/assets/mail-provider-setup.js?v=0.14.0" in index
+    assert 'version = "0.15.0"' in pyproject
+    assert 'APP_VERSION = "0.15.0"' in gateway
+    assert 'APP_VERSION = "0.15.0"' in launcher
+    assert 'app_version: str = "0.15.0"' in identity
+    assert '#define MyAppVersion "0.15.0"' in installer
+    assert "const APP_VERSION = '0.15.0'" in desktop
+    assert "/assets/startup-rescue.js?v=0.15.0" in index
+    assert "/assets/desktop-links.js?v=0.15.0" in index
+    assert "/assets/mail-provider-setup.js?v=0.15.0" in index
     assert '"apps/gateway/mail_agent_gateway/main.py"' in workflow
     assert '"apps/launcher/mail_agent_launcher/main.py"' in workflow
     assert "Could not synchronize APP_VERSION" in workflow

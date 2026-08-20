@@ -19,7 +19,7 @@ from fastapi.staticfiles import StaticFiles
 
 from mail_agent_core.agent import MailAgent
 from mail_agent_core.identity import IdentityManager
-from mail_agent_core.models import AgentBehaviorSettings, AgentProfile
+from mail_agent_core.models import AgentBehaviorSettings, AgentProfile, AgentRule, MailActionType, MailCategory, RuleMode
 from mail_agent_core.policy import PolicyEngine
 from mail_agent_core.providers import CodexCliProvider, OllamaProvider
 from mail_agent_core.update import UpdateClient
@@ -29,6 +29,7 @@ from .action_executor import MailActionExecutor
 from .agent_runtime import AgentRuntime
 from .audit import AuditLog
 from .cloud_sync import GoogleGmailSyncService, MicrosoftGraphSyncService
+from .conversation_store import ConversationStore
 from .draft_service import DraftService
 from .key_store import create_master_key_store
 from .mail_store import MailStore
@@ -41,6 +42,7 @@ from .schemas import (
     AgentRunRequest,
     AttentionResolveRequest,
     BehaviorSettingsRequest,
+    ConversationSnoozeRequest,
     BrainUpdateRequest,
     DraftSubmitRequest,
     DraftUpdateRequest,
@@ -56,12 +58,15 @@ from .schemas import (
     RegistrationResponse,
     RecoveryReconcileRequest,
     RuleSimulationRequest,
+    SenderPatternDecisionRequest,
     ShadowReplayRequest,
     SyncRunRequest,
+    UndoActionRequest,
 )
 from .settings import settings
 from .state import JsonStateStore
 from .sync import MailboxRuntimeConfig, MailSyncService
+from .undo_service import UndoService
 from .vault import CredentialVault
 
 settings.data_dir.mkdir(parents=True, exist_ok=True)
@@ -69,6 +74,7 @@ identity_manager = IdentityManager(settings.data_dir / "identity")
 state_store = JsonStateStore(settings.data_dir / "state.json")
 audit_log = AuditLog(settings.data_dir / "audit.jsonl")
 mail_store = MailStore(settings.data_dir / "mail.db")
+conversation_store = ConversationStore(settings.data_dir / "conversations.db")
 vault = CredentialVault(
     settings.data_dir / "secrets.vault",
     master_key_store=create_master_key_store(settings.data_dir),
@@ -153,7 +159,10 @@ agent_runtime = AgentRuntime(
     providers=providers,
     audit_log=audit_log,
     action_executor=action_executor,
+    conversation_store=conversation_store,
 )
+undo_service = UndoService(conversation_store=conversation_store, action_executor=action_executor, mail_store=mail_store)
+
 draft_service = DraftService(
     mail_store=mail_store,
     identity_manager=identity_manager,
@@ -288,7 +297,7 @@ async def lifespan(_: FastAPI):
                 await task
 
 
-APP_VERSION = "0.14.0"
+APP_VERSION = "0.15.0"
 update_client = UpdateClient(
     feed_url=settings.update_feed_url,
     release_page=settings.update_release_page,
@@ -1186,6 +1195,94 @@ async def resolve_attention(body: AttentionResolveRequest) -> dict:
     return item
 
 
+
+def _record_outbound_conversation(approval: dict) -> None:
+    proposal = dict(approval.get("proposal") or {})
+    if proposal.get("action") != MailActionType.SEND_REPLY.value:
+        return
+    thread_id = str(proposal.get("thread_id") or proposal.get("message_id") or "")
+    if not thread_id:
+        return
+    _state, config = _configuration_or_409()
+    behavior = AgentBehaviorSettings.model_validate(config.get("behavior") or {})
+    conversation_store.mark_outbound_sent(
+        mailbox_id=str(proposal.get("mailbox_id") or ""),
+        thread_id=thread_id,
+        source_message_id=proposal.get("message_id"),
+        recipient=str(proposal.get("recipient") or ""),
+        subject=str(proposal.get("subject") or ""),
+        awaiting_reply_days=behavior.follow_up_awaiting_reply_days,
+    )
+
+
+
+@app.get("/v1/conversations")
+async def list_conversations(mailbox_id: str | None = None, status: str | None = None, limit: int = 200, include_snoozed: bool = False) -> dict:
+    _state, config = _configuration_or_409()
+    behavior = AgentBehaviorSettings.model_validate(config.get("behavior") or {})
+    allowed = {None, "to_reply", "awaiting_reply", "fyi", "actioned"}
+    if status not in allowed:
+        raise HTTPException(status_code=400, detail="Unsupported conversation status")
+    return {
+        "threads": conversation_store.list_threads(mailbox_id=mailbox_id, status=status, limit=limit, include_snoozed=include_snoozed),
+        "due": conversation_store.due_followups(mailbox_id, limit=100) if mailbox_id else [],
+        "patterns": conversation_store.list_pattern_suggestions(
+            mailbox_id=mailbox_id,
+            min_samples=behavior.sender_pattern_min_samples,
+            confidence_threshold=behavior.sender_pattern_confidence,
+        ),
+    }
+
+
+@app.post("/v1/conversations/snooze")
+async def snooze_conversation(body: ConversationSnoozeRequest) -> dict:
+    _configuration_or_409()
+    try:
+        item = conversation_store.snooze(body.mailbox_id, body.thread_id, body.until)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Conversation not found") from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    audit_log.append("conversation_snoozed", actor=body.actor, details={"mailbox_id": body.mailbox_id, "thread_id": body.thread_id, "until": body.until})
+    return item
+
+
+@app.post("/v1/sender-patterns/accept")
+async def accept_sender_pattern(body: SenderPatternDecisionRequest) -> dict:
+    state, config = _configuration_or_409()
+    behavior = AgentBehaviorSettings.model_validate(config.get("behavior") or {})
+    normalized = body.sender.strip().lower()
+    if not any(rule.pattern == normalized for rule in behavior.rules):
+        behavior.rules.append(AgentRule(pattern=normalized, mode=RuleMode.NORMAL, category=body.category))
+    config["behavior"] = behavior.model_dump(mode="json")
+    state["configuration"] = config
+    state_store.write(state)
+    conversation_store.decide_pattern(body.mailbox_id, normalized, body.category.value, status="accepted")
+    audit_log.append("sender_pattern_accepted", actor=body.actor, details={"mailbox_id": body.mailbox_id, "sender": normalized, "category": body.category.value})
+    return await _settings_payload()
+
+
+@app.post("/v1/sender-patterns/reject")
+async def reject_sender_pattern(body: SenderPatternDecisionRequest) -> dict:
+    _configuration_or_409()
+    conversation_store.decide_pattern(body.mailbox_id, body.sender, body.category.value, status="rejected")
+    audit_log.append("sender_pattern_rejected", actor=body.actor, details={"mailbox_id": body.mailbox_id, "sender": body.sender, "category": body.category.value})
+    return {"status": "rejected"}
+
+
+@app.post("/v1/actions/undo/{token}")
+async def undo_mailbox_action(token: str, body: UndoActionRequest) -> dict:
+    _configuration_or_409()
+    try:
+        result = await undo_service.undo(token)
+    except KeyError as exc:
+        raise HTTPException(status_code=404, detail="Undo action not found") from exc
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    audit_log.append("mailbox_action_undone", actor=body.actor, details=result)
+    return result
+
+
 @app.get("/v1/drafts")
 async def list_drafts(mailbox_id: str | None = None, limit: int = 100) -> dict:
     return {
@@ -1260,6 +1357,7 @@ async def approve_action(approval_id: str, body: ApprovalDecisionRequest) -> dic
     if approval.get("execution_status") == "ready":
         try:
             approval = await action_executor.execute_approval(approval_id)
+            _record_outbound_conversation(approval)
         except RuntimeError as exc:
             raise HTTPException(status_code=502, detail=str(exc)) from exc
     return approval
@@ -1268,7 +1366,9 @@ async def approve_action(approval_id: str, body: ApprovalDecisionRequest) -> dic
 @app.post("/v1/approvals/{approval_id}/execute")
 async def execute_approved_action(approval_id: str) -> dict:
     try:
-        return await action_executor.execute_approval(approval_id)
+        approval = await action_executor.execute_approval(approval_id)
+        _record_outbound_conversation(approval)
+        return approval
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Approval not found") from exc
     except RuntimeError as exc:

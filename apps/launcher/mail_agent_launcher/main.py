@@ -27,7 +27,7 @@ from .desktop_runtime import (
 )
 
 APP_NAME = "MAIL-AGENT"
-APP_VERSION = "0.14.0"
+APP_VERSION = "0.15.0"
 GATEWAY_PORT = 8765
 REGISTRY_PORT = 8770
 GATEWAY_URL = f"http://127.0.0.1:{GATEWAY_PORT}"

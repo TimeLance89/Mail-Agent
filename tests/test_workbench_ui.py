@@ -11,9 +11,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_workbench_is_first_class_and_legacy_attention_enhancer_is_not_loaded():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
-    assert "/assets/workbench.css?v=0.14.0" in index
-    assert "/assets/workbench-ui.js?v=0.14.0" in index
-    assert "/assets/dashboard-live.js?v=0.14.0" in index
+    assert "/assets/workbench.css?v=0.15.0" in index
+    assert "/assets/workbench-ui.js?v=0.15.0" in index
+    assert "/assets/dashboard-live.js?v=0.15.0" in index
     assert "/assets/attention-center.js" not in index
 
 

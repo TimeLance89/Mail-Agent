@@ -200,6 +200,12 @@ class MicrosoftGraphClient:
             response.raise_for_status()
             return response.json()
 
+    async def set_read(self, message_id: str, read: bool) -> dict:
+        async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers) as client:
+            response = await client.patch(self._message_path(message_id), json={"isRead": bool(read)})
+            response.raise_for_status()
+            return response.json()
+
     async def move_message(self, message_id: str, destination_id: str) -> dict:
         async with httpx.AsyncClient(timeout=self.timeout, headers=self._headers) as client:
             response = await client.post(

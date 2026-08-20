@@ -6,6 +6,10 @@
     selectedDraft: 0,
     selectedAttention: 0,
     attention: [],
+    conversations: [],
+    patterns: [],
+    selectedWaiting: 0,
+    conversationLoading: false,
     settingsSection: 'agent',
     attentionLoading: false,
     inboxFilter: 'all',
@@ -41,7 +45,7 @@
   };
 
   viewTitle = function workbenchTitle() {
-    return ({overview:'Briefing',inbox:'Eingang',attention:'Wartet auf dich',approvals:'Freigaben',drafts:'Entwürfe',automation:'Automationen',activity:'Journal',shadow:'Testlabor',settings:'Agent & Regeln',system:'System'})[activeView] || 'Briefing';
+    return ({overview:'Briefing',inbox:'Eingang',attention:'Wartet auf dich',waiting:'Wartet auf andere',approvals:'Freigaben',drafts:'Entwürfe',automation:'Automationen',activity:'Journal',shadow:'Testlabor',settings:'Agent & Regeln',system:'System'})[activeView] || 'Briefing';
   };
 
   dashboardLayout = function workbenchLayout(content) {
@@ -64,11 +68,12 @@
         ${railButton('system','shield','System')}
       </aside>
       <aside class="wb-context">
-        <div class="wb-brand"><div><span class="wb-brand-title">MAIL-AGENT</span><span class="wb-brand-sub">${esc(agentName)} · lokaler Arbeitsbereich</span></div><span class="wb-build">0.14.0</span></div>
+        <div class="wb-brand"><div><span class="wb-brand-title">MAIL-AGENT</span><span class="wb-brand-sub">${esc(agentName)} · lokaler Arbeitsbereich</span></div><span class="wb-build">0.15.0</span></div>
         <div class="wb-nav-group"><div class="wb-nav-caption">Arbeit</div>
           ${navLink('overview','Briefing','home')}
           ${navLink('inbox','Eingang','inbox',dashboard.messages.length||'')}
           ${navLink('attention','Wartet auf dich','shield',attentionCount||'')}
+          ${navLink('waiting','Wartet auf andere','sync',(wb.conversations||[]).filter(x=>x.status==='awaiting_reply').length||'')}
           ${navLink('approvals','Freigaben','check',dashboard.approvals.length||'')}
           ${navLink('drafts','Entwürfe','draft',dashboard.drafts.length||'')}
         </div>
@@ -105,7 +110,7 @@
     return `<div class="wb-briefing">
       <div class="wb-section-head"><div><h2>Was heute zählt.</h2><p>Kein Dashboard zum Anschauen – eine Arbeitsliste zum Entscheiden.</p></div><div class="wb-section-meta"><span>${esc(mailbox?.email_address||'Kein Postfach')}</span><span>·</span><span>${behavior.execution_mode==='shadow'?'Shadow Mode':'Live Mode'}</span></div></div>
       <section class="wb-briefing-top"><div class="wb-briefing-copy"><h2>${attention.length?`${attention.length} Dinge brauchen deine Aufmerksamkeit.`:'Du musst gerade nichts entscheiden.'}</h2><p>MAIL-AGENT bündelt Rückfragen, Freigaben und wichtige Mails. Routinearbeit bleibt im Hintergrund; sensible Aktionen bleiben sichtbar und kontrolliert.</p></div><div class="wb-briefing-score"><small>Lokale Aktivität</small><strong>${processed||messages.length}</strong><span>${processed?'protokollierte Agentenläufe':'lokal synchronisierte Nachrichten'}</span></div></section>
-      <div class="wb-kpis"><div class="wb-kpi"><small>Eingang</small><strong>${messages.length}</strong><span>lokal verfügbar</span></div><div class="wb-kpi"><small>Wartet auf dich</small><strong>${attention.length}</strong><span>Rückfrage oder Priorität</span></div><div class="wb-kpi"><small>Freigaben</small><strong>${dashboard.approvals.length}</strong><span>Outbound / High-Risk</span></div><div class="wb-kpi"><small>Queue</small><strong>${brainStatus?.pending_total||0}</strong><span>noch zu analysieren</span></div></div>
+      <div class="wb-kpis"><div class="wb-kpi"><small>Eingang</small><strong>${messages.length}</strong><span>lokal verfügbar</span></div><div class="wb-kpi"><small>Wartet auf dich</small><strong>${attention.length}</strong><span>Rückfrage oder Priorität</span></div><div class="wb-kpi"><small>Freigaben</small><strong>${dashboard.approvals.length}</strong><span>Outbound / High-Risk</span></div><div class="wb-kpi"><small>Wartet auf andere</small><strong>${(wb.conversations||[]).filter(x=>x.status==='awaiting_reply').length}</strong><span>laufende Follow-ups</span></div></div>
       <div class="wb-briefing-grid"><section class="wb-surface"><div class="wb-surface-head"><div><strong>Wartet auf dich</strong><small>Nach Relevanz, nicht nach Eingangszeit</small></div><button class="wb-btn ghost" data-view="attention">Öffnen</button></div>${first.length?first.map((item,i)=>`<div class="wb-focus-row" data-view="attention"><span class="wb-focus-bar ${esc(item.agent_priority||'normal')}"></span><div class="wb-focus-copy"><b>${esc(item.subject||'(ohne Betreff)')}</b><p>${esc(item.agent_summary||item.sender||'')}</p></div><div class="wb-focus-meta"><span class="wb-tag ${tagClass(item.agent_priority)}">${esc(labelPriority(item.agent_priority))}</span>${item.needs_reply===true?'<span class="wb-tag">Antwort</span>':''}</div></div>`).join(''):'<div class="wb-empty"><div><b>Keine Rückfragen</b>Der Agent kann weiterarbeiten.</div></div>'}</section>
       <div class="wb-stack"><section class="wb-surface"><div class="wb-surface-head"><div><strong>Systemlage</strong><small>Nur Zustände, die für Arbeit relevant sind</small></div><span class="wb-tag green">bereit</span></div><div class="wb-status-table"><div class="wb-status-row"><span>Mailbox</span><strong>${dashboard.mailboxes.length?'verbunden':'fehlt'}</strong></div><div class="wb-status-row"><span>Ausführungsmodus</span><strong>${behavior.execution_mode==='shadow'?'Shadow':'Live'}</strong></div><div class="wb-status-row"><span>LLM</span><strong>${esc(runtimeSettings?.provider||form.provider||'—')} · ${esc(runtimeSettings?.model||form.model||'default')}</strong></div><div class="wb-status-row"><span>Agent-ID</span><strong>${identity||runtimeSettings?.identity?'signiert':'—'}</strong></div></div></section>
       <section class="wb-surface"><div class="wb-surface-head"><div><strong>Letzte Aktivität</strong><small>Lesbar statt technisch</small></div><button class="wb-btn ghost" data-view="activity">Journal</button></div>${traces.length?traces.slice(0,5).map(t=>`<div class="wb-activity-row"><time>${fmtTime(t.started_at||t.at)}</time><span>${esc(t.subject||t.event||t.reason||'Agentenaktivität')}</span></div>`).join(''):'<div class="wb-empty"><div><b>Noch keine Aktivität</b>Neue Läufe erscheinen hier.</div></div>'}</section></div></div>
@@ -128,6 +133,18 @@
     finally { wb.attentionLoading = false; }
   }
 
+
+  async function loadConversationIntelligence(silent=true) {
+    if (wb.conversationLoading) return;
+    wb.conversationLoading = true;
+    try {
+      const result = await get('/v1/conversations?limit=300');
+      wb.conversations = result.threads || [];
+      wb.patterns = result.patterns || [];
+    } catch (error) { if (!silent) showNotice(error.message,'error'); }
+    finally { wb.conversationLoading = false; }
+  }
+
   function renderAttention() {
     const allItems = wb.attention || [];
     const items = allItems.filter(item => wb.attentionFilter==='urgent' ? ['urgent','high'].includes(String(item.agent_priority||'').toLowerCase()) : true);
@@ -135,6 +152,15 @@
     const item = items[wb.selectedAttention];
     const id = item ? String(item.remote_id || item.internet_message_id || item.uid || '') : '';
     return `<div class="wb-split"><section class="wb-list-pane"><div class="wb-pane-head"><div><strong>Wartet auf dich</strong><span>${items.length} offene Entscheidungen</span></div><div class="wb-filter-row"><button class="wb-filter ${wb.attentionFilter==='all'?'active':''}" data-attention-filter="all">Alle</button><button class="wb-filter ${wb.attentionFilter==='urgent'?'active':''}" data-attention-filter="urgent">Dringend</button></div></div><div class="wb-list-scroll">${items.length?items.map((m,i)=>`<button class="wb-list-row ${i===wb.selectedAttention?'active':''}" data-attention-select="${i}"><div class="wb-list-line"><b>${esc(m.sender||'Unbekannt')}</b><span class="wb-tag ${tagClass(m.agent_priority)}">${esc(labelPriority(m.agent_priority))}</span></div><h4>${esc(m.subject||'(ohne Betreff)')}</h4><p>${esc(m.agent_summary||'Der Agent benötigt deine Entscheidung.')}</p></button>`).join(''):'<div class="wb-empty"><div><b>Alles entschieden</b>Aktuell wartet nichts auf dich.</div></div>'}</div></section>${item?`<section class="wb-detail-pane"><header class="wb-detail-header"><div class="wb-detail-eyebrow"><span>${esc(item.sender||'')}</span><span>${item.attention_source==='shadow'?'Shadow-Ergebnis':'Produktiver Lauf'}</span></div><h2>${esc(item.subject||'(ohne Betreff)')}</h2><div class="wb-risk-strip"><span class="wb-tag ${tagClass(item.agent_priority)}">${esc(labelPriority(item.agent_priority))}</span><span class="wb-tag">${esc(item.agent_category||'other')}</span>${item.needs_reply===true?'<span class="wb-tag warm">Antwort / Entscheidung</span>':''}</div></header><div class="wb-detail-body"><div class="wb-detail-summary"><small>Warum braucht der Agent dich?</small><p>${esc(item.agent_summary||'Diese Mail wurde als wichtig oder antwortbedürftig eingestuft.')}</p></div><div class="wb-explain"><div class="wb-explain-block"><small>Erkannter Kontext</small><p>${esc(item.needs_reply===true?'Im Thread wird eine Entscheidung oder Antwort erwartet.':'Hohe Relevanz / Priorität erkannt.')}</p></div><div class="wb-explain-block"><small>Sicherheitsgrenze</small><p>Eine Rückmeldung hier verändert keine Policy. Senden bleibt separat freigabepflichtig.</p></div></div><div style="margin-top:16px"><label class="wb-editor-field"><span>Deine Rückmeldung an den Agenten</span><textarea class="wb-note" data-attention-note="${esc(id)}" placeholder="Kontext, Entscheidung oder gewünschte Richtung …">${esc(item.owner_note||'')}</textarea></label></div></div><footer class="wb-detail-footer"><button class="wb-btn" data-attention-resolve="${esc(id)}" data-mailbox="${esc(item.mailbox_id||'')}">Als erledigt speichern</button></footer></section>`:'<section class="wb-detail-pane"><div class="wb-empty"><div><b>Keine Rückfragen</b>Der Agent hat gerade nichts für dich.</div></div></section>'}</div>`;
+  }
+
+
+  function renderWaiting() {
+    const items = (wb.conversations || []).filter(item => item.status === 'awaiting_reply');
+    wb.selectedWaiting = Math.max(0, Math.min(wb.selectedWaiting, Math.max(0, items.length-1)));
+    const item = items[wb.selectedWaiting];
+    const due = value => { if (!value) return 'ohne Frist'; const d=new Date(value); const diff=Math.ceil((d-Date.now())/86400000); return diff<0?`${Math.abs(diff)} Tag${Math.abs(diff)===1?'':'e'} überfällig`:diff===0?'heute fällig':`in ${diff} Tag${diff===1?'':'en'}`; };
+    return `<div class="wb-split"><section class="wb-list-pane"><div class="wb-pane-head"><div><strong>Wartet auf andere</strong><span>${items.length} laufende Gespräche</span></div><span class="wb-tag warm">Follow-up Intelligence</span></div><div class="wb-list-scroll">${items.length?items.map((t,i)=>`<button class="wb-list-row ${i===wb.selectedWaiting?'active':''}" data-waiting-select="${i}"><div class="wb-list-line"><b>${esc(t.last_sender||'Kontakt')}</b><span class="wb-tag ${t.due_at&&new Date(t.due_at)<=new Date()?'red':'warm'}">${esc(due(t.due_at))}</span></div><h4>${esc(t.subject||'(ohne Betreff)')}</h4><p>${esc(t.rationale||'Die Gegenseite ist am Zug.')}</p></button>`).join(''):'<div class="wb-empty"><div><b>Auf keine Antwort warten</b>Aktuell ist kein Gespräch offen, bei dem die Gegenseite am Zug ist.</div></div>'}</div></section>${item?`<section class="wb-detail-pane"><header class="wb-detail-header"><div class="wb-detail-eyebrow"><span>${esc(item.last_sender||'')}</span><span>seit ${esc(item.waiting_since?new Date(item.waiting_since).toLocaleDateString('de-DE'):'—')}</span></div><h2>${esc(item.subject||'(ohne Betreff)')}</h2><div class="wb-risk-strip"><span class="wb-tag warm">Warte auf Antwort</span><span class="wb-tag ${item.due_at&&new Date(item.due_at)<=new Date()?'red':''}">${esc(due(item.due_at))}</span>${item.followup_draft_id?'<span class="wb-tag green">Follow-up-Entwurf bereit</span>':''}</div></header><div class="wb-detail-body"><div class="wb-detail-summary"><small>Gesprächszustand</small><p>${esc(item.rationale||'Eine freigegebene Antwort wurde gesendet. MAIL-AGENT wartet auf die Gegenseite.')}</p></div><div class="wb-explain"><div class="wb-explain-block"><small>Automatische Wiedervorlage</small><p>${item.due_at?`MAIL-AGENT prüft diesen Thread ab ${esc(new Date(item.due_at).toLocaleString('de-DE'))}.`:'Für diesen Thread ist keine automatische Frist gesetzt.'}</p></div><div class="wb-explain-block"><small>Coalescing</small><p>${esc(item.coalesced_count||1)} neue Nachricht${Number(item.coalesced_count||1)===1?'':'en'} wurden beim letzten Lauf als ein Gespräch behandelt.</p></div></div>${(item.decision_path||[]).length?`<div class="wb-decision-path"><small>Warum dieser Zustand?</small>${item.decision_path.map(step=>`<div><b>${esc(step.stage)}</b><span>${esc(step.result||'')}</span><p>${esc(step.detail||'')}</p></div>`).join('')}</div>`:''}</div><footer class="wb-detail-footer"><button class="wb-btn" data-snooze-thread="${esc(item.thread_id)}" data-mailbox="${esc(item.mailbox_id)}" data-hours="24">Morgen</button><button class="wb-btn" data-snooze-thread="${esc(item.thread_id)}" data-mailbox="${esc(item.mailbox_id)}" data-hours="72">In 3 Tagen</button>${item.followup_draft_id?'<button class="wb-btn primary" data-view="drafts">Entwurf öffnen</button>':'<span class="wb-tag">Entwurf wird bei Fälligkeit vorbereitet</span>'}</footer></section>`:'<section class="wb-detail-pane"><div class="wb-empty"><div><b>Kein wartendes Gespräch</b></div></div></section>'}</div>`;
   }
 
   function renderApprovals() {
@@ -157,8 +183,9 @@
     const b = runtimeSettings?.behavior || {};
     const newsletter = b.newsletter_action || 'none';
     const advertising = b.advertising_action || 'none';
+    const cold = b.cold_outreach_action || 'none';
     const option = (value,label,current,type) => `<button class="wb-choice ${current===value?'active':''}" data-auto-choice="${type}" data-auto-value="${value}">${label}</button>`;
-    return `<div><div class="wb-section-head"><div><h2>Routinearbeit, aber unter deiner Kontrolle.</h2><p>Automationen sind explizite Regeln. MAIL-AGENT zeigt, was selbstständig passieren darf – und was nicht.</p></div><span class="wb-tag ${b.execution_mode==='shadow'?'warm':'green'}">${b.execution_mode==='shadow'?'Shadow Mode':'Live Mode'}</span></div><div class="wb-automation"><section class="wb-surface"><div class="wb-surface-head"><div><strong>Mail-Automationen</strong><small>Deterministische Nachbearbeitung nach der Analyse</small></div><button class="wb-btn primary" id="wb-save-automation">Speichern</button></div><div class="wb-rule-block"><div class="wb-rule-head"><div><b>Newsletter</b><p>Eindeutig erkannte Newsletter ohne Rückfrage nach deiner Standardaktion behandeln.</p></div><span class="wb-tag">${newsletter==='none'?'Nur analysieren':newsletter==='mark_read'?'Als gelesen':'Archivieren'}</span></div><div class="wb-choice-line">${option('none','Nur analysieren',newsletter,'newsletter')}${option('mark_read','Als gelesen markieren',newsletter,'newsletter')}${option('archive','Archivieren, wenn Policy erlaubt',newsletter,'newsletter')}</div></div><div class="wb-rule-block"><div class="wb-rule-head"><div><b>Werbung</b><p>Getrennt von Newslettern. Nur hohe Klassifikationssicherheit sollte automatisch handeln.</p></div><span class="wb-tag">${advertising==='none'?'Nur analysieren':advertising==='mark_read'?'Als gelesen':'Archivieren'}</span></div><div class="wb-choice-line">${option('none','Nur analysieren',advertising,'advertising')}${option('mark_read','Als gelesen markieren',advertising,'advertising')}${option('archive','Archivieren, wenn Policy erlaubt',advertising,'advertising')}</div></div><div class="wb-rule-block"><div class="wb-rule-head"><div><b>Abgearbeitete Nachrichten</b><p>Nach erfolgreicher Bearbeitung im echten Postfach als gelesen markieren. Fehler werden separat erneut versucht – ohne zweite LLM-Analyse.</p></div><label class="wb-toggle"><input id="wb-mark-processed-read" type="checkbox" ${b.mark_processed_read!==false?'checked':''}><span></span></label></div></div><div class="wb-rule-block"><div class="wb-rule-head"><div><b>Automatische Analyse</b><p>Neue Nachrichten im Zeitplan selbstständig in die Agenten-Queue übernehmen.</p></div><label class="wb-toggle"><input id="wb-auto-analyze" type="checkbox" ${b.auto_analyze_new_mail!==false?'checked':''}><span></span></label></div></div></section><aside class="wb-surface"><div class="wb-surface-head"><div><strong>Sicherheitsgrenzen</strong><small>gelten unabhängig von Automationen</small></div></div><div class="wb-side-note"><strong>Senden & Weiterleiten</strong>Bleiben freigabepflichtig. Eine Automationsregel kann diese Grenze nicht aufheben.</div><div class="wb-side-note"><strong>Löschen</strong>Bleibt High-Risk und nutzt sichere Trash-/Soft-Delete-Semantik.</div><div class="wb-side-note"><strong>Shadow Mode</strong>Unterbindet sämtliche produktiven Postfachänderungen – auch Mark-as-read und Archivieren.</div></aside></div></div>`;
+    return `<div><div class="wb-section-head"><div><h2>Routinearbeit, aber unter deiner Kontrolle.</h2><p>Automationen sind explizite Regeln. MAIL-AGENT zeigt, was selbstständig passieren darf – und was nicht.</p></div><span class="wb-tag ${b.execution_mode==='shadow'?'warm':'green'}">${b.execution_mode==='shadow'?'Shadow Mode':'Live Mode'}</span></div><div class="wb-automation"><section class="wb-surface"><div class="wb-surface-head"><div><strong>Mail-Automationen</strong><small>Deterministische Nachbearbeitung nach der Analyse</small></div><button class="wb-btn primary" id="wb-save-automation">Speichern</button></div><div class="wb-rule-block"><div class="wb-rule-head"><div><b>Newsletter</b><p>Eindeutig erkannte Newsletter ohne Rückfrage nach deiner Standardaktion behandeln.</p></div><span class="wb-tag">${newsletter==='none'?'Nur analysieren':newsletter==='mark_read'?'Als gelesen':'Archivieren'}</span></div><div class="wb-choice-line">${option('none','Nur analysieren',newsletter,'newsletter')}${option('mark_read','Als gelesen markieren',newsletter,'newsletter')}${option('archive','Archivieren, wenn Policy erlaubt',newsletter,'newsletter')}</div></div><div class="wb-rule-block"><div class="wb-rule-head"><div><b>Werbung</b><p>Getrennt von Newslettern. Nur hohe Klassifikationssicherheit sollte automatisch handeln.</p></div><span class="wb-tag">${advertising==='none'?'Nur analysieren':advertising==='mark_read'?'Als gelesen':'Archivieren'}</span></div><div class="wb-choice-line">${option('none','Nur analysieren',advertising,'advertising')}${option('mark_read','Als gelesen markieren',advertising,'advertising')}${option('archive','Archivieren, wenn Policy erlaubt',advertising,'advertising')}</div></div><div class="wb-rule-block"><div class="wb-rule-head"><div><b>Unaufgeforderte Vertriebsanfragen</b><p>Cold Outreach wird getrennt von Werbung erkannt. Bestehender Thread-Kontakt verhindert diese Einstufung.</p></div><span class="wb-tag">${cold==='none'?'Nur analysieren':cold==='mark_read'?'Als gelesen':'Archivieren'}</span></div><div class="wb-choice-line">${option('none','Nur analysieren',cold,'cold_outreach')}${option('mark_read','Als gelesen markieren',cold,'cold_outreach')}${option('archive','Archivieren, wenn Policy erlaubt',cold,'cold_outreach')}</div></div><div class="wb-rule-block"><div class="wb-rule-head"><div><b>Follow-ups</b><p>Gesprächszustände werden automatisch verfolgt. Überfällige Threads können einen lokalen, weiterhin freigabepflichtigen Follow-up-Entwurf erhalten.</p></div><label class="wb-toggle"><input id="wb-followup-drafts" type="checkbox" ${b.follow_up_auto_draft!==false?'checked':''}><span></span></label></div><div class="wb-followup-grid"><label>Du bist dran nach <input id="wb-followup-to-reply" type="number" min="1" max="60" value="${esc(b.follow_up_to_reply_days??2)}"> Arbeitstagen</label><label>Warte auf andere nach <input id="wb-followup-awaiting" type="number" min="1" max="60" value="${esc(b.follow_up_awaiting_reply_days??4)}"> Arbeitstagen</label></div></div><div class="wb-rule-block"><div class="wb-rule-head"><div><b>Abgearbeitete Nachrichten</b><p>Nach erfolgreicher Bearbeitung im echten Postfach als gelesen markieren. Fehler werden separat erneut versucht – ohne zweite LLM-Analyse.</p></div><label class="wb-toggle"><input id="wb-mark-processed-read" type="checkbox" ${b.mark_processed_read!==false?'checked':''}><span></span></label></div></div><div class="wb-rule-block"><div class="wb-rule-head"><div><b>Automatische Analyse</b><p>Neue Nachrichten im Zeitplan selbstständig in die Agenten-Queue übernehmen.</p></div><label class="wb-toggle"><input id="wb-auto-analyze" type="checkbox" ${b.auto_analyze_new_mail!==false?'checked':''}><span></span></label></div></div></section><aside class="wb-surface"><div class="wb-surface-head"><div><strong>Sicherheitsgrenzen</strong><small>gelten unabhängig von Automationen</small></div></div><div class="wb-side-note"><strong>Senden & Weiterleiten</strong>Bleiben freigabepflichtig. Eine Automationsregel kann diese Grenze nicht aufheben.</div><div class="wb-side-note"><strong>Löschen</strong>Bleibt High-Risk und nutzt sichere Trash-/Soft-Delete-Semantik.</div><div class="wb-side-note"><strong>Shadow Mode</strong>Unterbindet sämtliche produktiven Postfachänderungen – auch Mark-as-read und Archivieren.</div>${wb.patterns.length?`<div class="wb-patterns"><h4>Erkannte Sender-Muster</h4>${wb.patterns.slice(0,6).map(p=>`<div class="wb-pattern"><b>${esc(p.sender)}</b><span>${esc(p.matching_samples)}/${esc(p.samples)} × ${esc(p.category)} · ${Math.round(Number(p.confidence||0)*100)} %</span><div><button class="wb-btn" data-pattern-reject data-mailbox="${esc(p.mailbox_id)}" data-sender="${esc(p.sender)}" data-category="${esc(p.category)}">Verwerfen</button><button class="wb-btn primary" data-pattern-accept data-mailbox="${esc(p.mailbox_id)}" data-sender="${esc(p.sender)}" data-category="${esc(p.category)}">Als Regel übernehmen</button></div></div>`).join('')}</div>`:''}</aside></div></div>`;
   }
 
   function settingNav(label, section) { return `<button class="wb-settings-link ${wb.settingsSection===section?'active':''}" data-settings-panel="${section}">${esc(label)}</button>`; }
@@ -180,7 +207,7 @@
       panel = `<div class="wb-settings-title"><h2>Regeln</h2><p>Absender und Domains deterministisch steuern. Diese Regeln werden nach der Modellanalyse im Gateway erzwungen.</p></div><div class="wb-setting-section"><div class="wb-settings-actions top"><button class="wb-btn" id="settings-add-rule">Regel hinzufügen</button><button class="wb-btn primary" id="wb-save-rules">Regeln speichern</button></div><div class="rule-editor wb-rule-editor">${rules.length?rules.map(ruleRow).join(''):'<div class="wb-empty compact"><div><b>Noch keine speziellen Regeln</b>Neue Regeln können Absender oder ganze Domains deterministisch behandeln.</div></div>'}</div></div>`;
     }
     if (wb.settingsSection === 'software') {
-      const current = updateStatus?.current_version || '0.14.0';
+      const current = updateStatus?.current_version || '0.15.0';
       const available = !!updateStatus?.available;
       panel = `<div class="wb-settings-title"><h2>Software</h2><p>Update-Kanal, installierte Version und verifizierter In-Place-Updater.</p></div><div class="wb-setting-section"><div class="wb-setting-row"><div class="wb-setting-label"><b>Installierte Version</b></div><div class="wb-control"><span class="wb-tag">v${esc(current)}</span></div></div><div class="wb-setting-row"><div class="wb-setting-label"><b>Update-Kanal</b><p>Installer wird per SHA-256 und Release-Digest geprüft.</p></div><div class="wb-control">${esc(updateStatus?.channel||'Preview')}</div></div><div class="wb-settings-actions"><button class="wb-btn" id="check-update">Jetzt nach Updates suchen</button>${available?'<button class="wb-btn primary" id="install-update">Update installieren</button>':''}</div>${updateStatus?.error?`<div class="wb-side-note"><strong>Update-Kanal nicht erreichbar</strong>${esc(updateStatus.error)}</div>`:''}</div>`;
       if (!updateStatus && !updateLoading) setTimeout(()=>checkUpdate(true),0);
@@ -201,6 +228,7 @@
     if (activeView === 'overview') content = renderBriefing();
     if (activeView === 'inbox') content = renderInbox();
     if (activeView === 'attention') content = renderAttention();
+    if (activeView === 'waiting') content = renderWaiting();
     if (activeView === 'approvals') content = renderApprovals();
     if (activeView === 'drafts') content = renderDrafts();
     if (activeView === 'automation') content = renderAutomation();
@@ -225,6 +253,7 @@
         activeView = view;
         history.replaceState({}, '', view === 'overview' ? '/' : `/?view=${encodeURIComponent(view)}`);
         if (view === 'attention') await loadAttention(true);
+        if (['overview','waiting','automation'].includes(view)) await loadConversationIntelligence(true);
         if (['settings','automation','activity','shadow','system'].includes(view)) await Promise.all([
           runtimeSettings ? Promise.resolve() : loadRuntimeSettings(true),
           loadBrainStatus(true),
@@ -244,6 +273,10 @@
         auto_analyze_new_mail: !!document.getElementById('wb-auto-analyze')?.checked,
         newsletter_action: document.querySelector('[data-auto-choice="newsletter"].active')?.dataset.autoValue || 'none',
         advertising_action: document.querySelector('[data-auto-choice="advertising"].active')?.dataset.autoValue || 'none',
+        cold_outreach_action: document.querySelector('[data-auto-choice="cold_outreach"].active')?.dataset.autoValue || 'none',
+        follow_up_auto_draft: !!document.getElementById('wb-followup-drafts')?.checked,
+        follow_up_to_reply_days: Number(document.getElementById('wb-followup-to-reply')?.value || 2),
+        follow_up_awaiting_reply_days: Number(document.getElementById('wb-followup-awaiting')?.value || 4),
       };
       runtimeSettings = await put('/v1/settings/behavior',{behavior:next});
       showNotice('Automationen gespeichert.');
@@ -263,7 +296,7 @@
 
   function commandItems() {
     const items = [
-      ['overview','Briefing öffnen','Arbeitslage und Prioritäten'],['inbox','Eingang öffnen','Synchronisierte Nachrichten'],['attention','Wartet auf dich','Offene Rückfragen'],['approvals','Freigaben öffnen','Riskante Aktionen prüfen'],['drafts','Entwürfe öffnen','Vorbereitete Antworten'],['automation','Automationen öffnen','Newsletter und Werbung'],['activity','Journal öffnen','Agentenaktivität'],['shadow','Testlabor öffnen','Shadow Mode und Simulation'],['settings','Agent & Regeln','Konfiguration'],['system','System öffnen','Gesundheit und Recovery'],
+      ['overview','Briefing öffnen','Arbeitslage und Prioritäten'],['inbox','Eingang öffnen','Synchronisierte Nachrichten'],['attention','Wartet auf dich','Offene Rückfragen'],['waiting','Wartet auf andere','Follow-ups und ausstehende Antworten'],['approvals','Freigaben öffnen','Riskante Aktionen prüfen'],['drafts','Entwürfe öffnen','Vorbereitete Antworten'],['automation','Automationen öffnen','Newsletter und Werbung'],['activity','Journal öffnen','Agentenaktivität'],['shadow','Testlabor öffnen','Shadow Mode und Simulation'],['settings','Agent & Regeln','Konfiguration'],['system','System öffnen','Gesundheit und Recovery'],
     ];
     for (const m of (dashboard.messages||[]).slice(0,30)) items.push(['inbox', clean(m.subject||'(ohne Betreff)'), clean(m.sender||'Nachricht')]);
     return items;
@@ -289,6 +322,7 @@
     document.querySelectorAll('[data-attention-filter]').forEach(el=>el.addEventListener('click',()=>{wb.attentionFilter=el.dataset.attentionFilter;wb.selectedAttention=0;render();}));
     document.querySelectorAll('[data-mail-select]').forEach(el => el.addEventListener('click',()=>{wb.selectedMessage=Number(el.dataset.mailSelect);render();}));
     document.querySelectorAll('[data-attention-select]').forEach(el => el.addEventListener('click',()=>{wb.selectedAttention=Number(el.dataset.attentionSelect);render();}));
+    document.querySelectorAll('[data-waiting-select]').forEach(el => el.addEventListener('click',()=>{wb.selectedWaiting=Number(el.dataset.waitingSelect);render();}));
     document.querySelectorAll('[data-approval-select]').forEach(el => el.addEventListener('click',()=>{wb.selectedApproval=Number(el.dataset.approvalSelect);render();}));
     document.querySelectorAll('[data-draft-select]').forEach(el => el.addEventListener('click',()=>{wb.selectedDraft=Number(el.dataset.draftSelect);render();}));
     document.querySelectorAll('[data-settings-panel]').forEach(el => el.addEventListener('click',()=>{wb.settingsSection=el.dataset.settingsPanel;render();}));
@@ -310,6 +344,20 @@
       const note=document.querySelector(`[data-attention-note="${CSS.escape(id)}"]`)?.value?.trim()||null;
       try{await post('/v1/attention/resolve',{mailbox_id:mailboxId,message_id:id,owner_note:note,actor:'local-user'});await loadAttention(true);showNotice('Rückfrage erledigt.');render();}catch(error){showNotice(error.message,'error');}
     }));
+
+    document.querySelectorAll('[data-snooze-thread]').forEach(button=>button.addEventListener('click',async()=>{
+      const until=new Date(Date.now()+Number(button.dataset.hours||24)*3600000).toISOString();
+      try{await post('/v1/conversations/snooze',{mailbox_id:button.dataset.mailbox,thread_id:button.dataset.snoozeThread,until,actor:'local-user'});await loadConversationIntelligence(true);showNotice('Wiedervorlage gespeichert.');render();}catch(error){showNotice(error.message,'error');}
+    }));
+    document.querySelectorAll('[data-pattern-accept]').forEach(button=>button.addEventListener('click',async()=>{
+      try{await post('/v1/sender-patterns/accept',{mailbox_id:button.dataset.mailbox,sender:button.dataset.sender,category:button.dataset.category,actor:'local-user'});await loadConversationIntelligence(true);showNotice('Sender-Muster als Regel übernommen.');render();}catch(error){showNotice(error.message,'error');}
+    }));
+    document.querySelectorAll('[data-pattern-reject]').forEach(button=>button.addEventListener('click',async()=>{
+      try{await post('/v1/sender-patterns/reject',{mailbox_id:button.dataset.mailbox,sender:button.dataset.sender,category:button.dataset.category,actor:'local-user'});await loadConversationIntelligence(true);showNotice('Muster verworfen.');render();}catch(error){showNotice(error.message,'error');}
+    }));
+    document.querySelectorAll('[data-undo-token]').forEach(button=>button.addEventListener('click',async()=>{
+      try{await post(`/v1/actions/undo/${encodeURIComponent(button.dataset.undoToken)}`,{actor:'local-user'});showNotice('Mailbox-Aktion rückgängig gemacht.');await loadDashboard(true);render();}catch(error){showNotice(error.message,'error');}
+    }));
     if (!window.__mailAgentWorkbenchKeysBound) { window.__mailAgentWorkbenchKeysBound=true; document.addEventListener('keydown',event=>{ if((event.ctrlKey||event.metaKey)&&event.key.toLowerCase()==='k'){event.preventDefault();openCommand();} if(event.key==='Escape') closeCommand(); }); }
   }
 
@@ -317,5 +365,5 @@
   window.__mailAgentWorkbench = wb;
 
   // Real installed systems load attention quietly; fresh setup remains untouched.
-  setTimeout(async()=>{ if (installed) { await loadAttention(true); render(); } }, 450);
+  setTimeout(async()=>{ if (installed) { await Promise.all([loadAttention(true),loadConversationIntelligence(true)]); render(); } }, 450);
 })();

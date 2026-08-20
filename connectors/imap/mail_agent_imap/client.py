@@ -136,6 +136,15 @@ class ImapMailbox:
             if status != "OK":
                 raise RuntimeError(f"Unable to mark IMAP UID {uid} as seen")
 
+    def mark_unseen(self, uid: int, folder: str = "INBOX") -> None:
+        with self._login() as client:
+            status, _ = client.select(folder, readonly=False)
+            if status != "OK":
+                raise RuntimeError(f"Unable to select IMAP folder {folder!r}")
+            status, _ = client.uid("store", str(uid), "-FLAGS.SILENT", "(\\Seen)")
+            if status != "OK":
+                raise RuntimeError(f"Unable to mark IMAP UID {uid} as unseen")
+
     def move_uid(self, uid: int, destination: str, folder: str = "INBOX") -> None:
         destination = self.resolve_folder(destination)
         with self._login() as client:
