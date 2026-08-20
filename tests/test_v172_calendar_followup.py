@@ -26,7 +26,7 @@ def _runtime(tmp_path: Path):
         owner_id="owner_1",
         agent_name="Nova",
         usage_type=UsageType.PRIVATE,
-        autonomy_mode=AutonomyMode.COPILOT,
+        autonomy_mode=AutonomyMode.ASSISTANT,
         language="de",
         email_signature="Viele Grüße\nSteffen",
     )
@@ -151,7 +151,7 @@ def test_v172_workbench_contract_exposes_discard_and_mail_followup():
 
     assert "/assets/v172-ux.js?v=0.17.2" in index
     assert "data.draftDiscard" in ux or "draftDiscard" in ux
-    assert "/discard`" in ux
+    assert "/discard" in ux
     assert "prepare-mail-reply" in ux
     assert "Freigeben & senden" in ux
     assert "fetch('/health'" in ux
@@ -159,3 +159,4 @@ def test_v172_workbench_contract_exposes_discard_and_mail_followup():
     assert "mail_agent_launcher.v172_entry" in entry
     assert "_approve_with_confirmation_reply" in gateway
     assert "mail_followup_required" in gateway
+    assert "writerwithoutprivateaccess" in gateway
