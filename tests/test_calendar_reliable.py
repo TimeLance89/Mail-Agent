@@ -157,6 +157,8 @@ def proposal(action=CalendarAction.CREATE, *, event_id: str | None = None) -> Ca
 @pytest.mark.asyncio
 async def test_free_slot_finder_uses_busy_intervals_and_work_hours(tmp_path: Path):
     fake = FakeCalendarClient()
+    # Google Free/Busy timestamps are absolute instants. 08:00-09:00Z is 10:00-11:00
+    # in Europe/Berlin on this date, so the preceding 09:00-10:00 local slot is valid.
     fake.busy = [
         {"start": "2026-08-24T08:00:00Z", "end": "2026-08-24T09:00:00Z"},
     ]
@@ -175,8 +177,9 @@ async def test_free_slot_finder_uses_busy_intervals_and_work_hours(tmp_path: Pat
     )
     starts = [item["start"] for item in result["slots"]]
     assert starts
+    assert starts[0] == "2026-08-24T09:00:00+02:00"
     assert "2026-08-24T10:00:00+02:00" not in starts
-    assert starts[0] == "2026-08-24T11:00:00+02:00"
+    assert "2026-08-24T11:00:00+02:00" in starts
 
 
 @pytest.mark.asyncio
