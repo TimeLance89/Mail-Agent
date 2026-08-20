@@ -10,7 +10,7 @@ def test_adaptive_routes_remain_reachable_with_web_bundle_mounted():
     privacy = client.get("/v1/usage/privacy")
 
     assert status.status_code == 200
-    assert status.json()["version"] == "0.16.0"
+    assert status.json()["version"] == "0.16.1"
     assert status.json()["privacy"]["usage_contains_mail_content"] is False
     assert privacy.status_code == 200
     assert "usage_events" in privacy.json()["tables"]
