@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 from pathlib import Path
+import shutil
+import subprocess
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -11,6 +13,17 @@ def test_provider_setup_is_loaded_and_versioned():
     assert "/assets/mail-provider-setup.css?v=0.13.9" in index
     assert "/assets/mail-provider-setup.js?v=0.13.9" in index
     assert "app.js?v=0.13.9" in index
+
+
+def test_provider_setup_javascript_syntax():
+    node = shutil.which("node")
+    if node:
+        subprocess.run(
+            [node, "--check", str(ROOT / "apps/web/mail-provider-setup.js")],
+            check=True,
+            capture_output=True,
+            text=True,
+        )
 
 
 def test_common_provider_presets_are_available():
