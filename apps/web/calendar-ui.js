@@ -93,7 +93,7 @@
             <label class="cal-field full"><span><input id="calendar-send-updates" type="checkbox"> Google-Einladungen nach Freigabe versenden</span></label>
           </div>
           <div class="cal-actions"><button class="cal-btn" id="calendar-freebusy">Zeitraum auf Belegung prüfen</button><button class="cal-btn primary" id="calendar-propose">${state.editingEventId?'Änderung zur Freigabe':'Termin zur Freigabe'}</button>${state.editingEventId?'<button class="cal-btn" id="calendar-edit-cancel">Bearbeiten abbrechen</button>':''}</div>
-          ${state.busyText?`<div class="cal-busy">${esc(state.busyText)}</div>`:''}
+          <div id="calendar-busy-result" class="cal-busy" style="${state.busyText?'':'display:none'}">${esc(state.busyText)}</div>
           <div class="cal-note">Sicherheitsgrenze: Calendar-Mutationen haben immer <b>requires_approval=true</b>. Auch im autonomen Modus gibt es keinen direkten Schreibpfad.</div>
         </section>
         <section class="cal-card">
@@ -163,18 +163,18 @@
 
   function formValue(id) { return document.getElementById(id)?.value || ''; }
   async function propose(action, eventId='') {
-    const title = formValue('calendar-title').trim();
-    const start = formValue('calendar-start');
-    const end = formValue('calendar-end');
-    const attendees = formValue('calendar-attendees').split(',').map(x=>x.trim()).filter(Boolean);
-    const event = action === 'delete' ? null : {
-      summary:title,
-      start:rfc3339(start),
-      end:rfc3339(end),
-      location:formValue('calendar-location').trim() || null,
-      attendees,
-    };
-    if (action !== 'delete' && !title) throw new Error('Bitte einen Termintitel eingeben.');
+    let event = null;
+    if (action !== 'delete') {
+      const title = formValue('calendar-title').trim();
+      if (!title) throw new Error('Bitte einen Termintitel eingeben.');
+      event = {
+        summary:title,
+        start:rfc3339(formValue('calendar-start')),
+        end:rfc3339(formValue('calendar-end')),
+        location:formValue('calendar-location').trim() || null,
+        attendees:formValue('calendar-attendees').split(',').map(x=>x.trim()).filter(Boolean),
+      };
+    }
     const proposal = {
       action,
       mailbox_id:state.mailboxId,
@@ -196,13 +196,15 @@
     const result = await api('/v1/calendar/freebusy', {method:'POST', body:JSON.stringify({mailbox_id:state.mailboxId,time_min:start,time_max:end,calendar_ids:[state.calendarId]})});
     const busy = result.calendars?.[state.calendarId]?.busy || [];
     state.busyText = busy.length ? `Belegt: ${busy.map(x=>`${fmt(x.start)} – ${fmt(x.end)}`).join(' · ')}` : 'Der gewählte Zeitraum ist laut Google Kalender frei.';
-    render();
+    const box = document.getElementById('calendar-busy-result');
+    if (box) { box.textContent = state.busyText; box.style.display = ''; }
   }
 
   function startEdit(eventId) {
     const event = state.events.find(item=>String(item.id)===String(eventId));
     if (!event) return;
     state.editingEventId = event.id;
+    state.busyText = '';
     render();
     const set = (id,value) => { const el=document.getElementById(id); if(el) el.value=value||''; };
     set('calendar-title', event.summary||'');
@@ -215,10 +217,10 @@
   function bind(root) {
     root.querySelector('#calendar-connect')?.addEventListener('click', connect);
     root.querySelector('#calendar-refresh')?.addEventListener('click', refresh);
-    root.querySelector('#calendar-id')?.addEventListener('change', async e => { state.calendarId=e.target.value; await loadCalendarData(); });
+    root.querySelector('#calendar-id')?.addEventListener('change', async e => { state.calendarId=e.target.value; state.busyText=''; await loadCalendarData(); });
     root.querySelector('#calendar-freebusy')?.addEventListener('click', () => checkBusy().catch(e=>notify(e.message,true)));
     root.querySelector('#calendar-propose')?.addEventListener('click', () => propose(state.editingEventId?'update':'create', state.editingEventId).catch(e=>notify(e.message,true)));
-    root.querySelector('#calendar-edit-cancel')?.addEventListener('click', () => { state.editingEventId=''; render(); });
+    root.querySelector('#calendar-edit-cancel')?.addEventListener('click', () => { state.editingEventId=''; state.busyText=''; render(); });
     root.querySelectorAll('[data-calendar-edit]').forEach(btn=>btn.addEventListener('click',()=>startEdit(btn.dataset.calendarEdit)));
     root.querySelectorAll('[data-calendar-delete]').forEach(btn=>btn.addEventListener('click',async()=>{try{await propose('delete',btn.dataset.calendarDelete);}catch(e){notify(e.message,true)}}));
     root.querySelectorAll('[data-calendar-approve]').forEach(btn=>btn.addEventListener('click',async()=>{try{await api(`/v1/calendar/approvals/${encodeURIComponent(btn.dataset.calendarApprove)}/approve`,{method:'POST',body:JSON.stringify({actor:'local-user'})});notify('Kalender-Aktion ausgeführt.');await loadCalendarData();}catch(e){notify(e.message,true)}}));
