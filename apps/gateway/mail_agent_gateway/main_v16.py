@@ -3,6 +3,7 @@ from __future__ import annotations
 from typing import Any
 
 from fastapi import HTTPException
+from mail_agent_core.models import MailActionProposal
 
 from . import cloud_sync as cloud_sync_module
 from . import main as base
@@ -20,13 +21,14 @@ from .adaptive_intelligence import (
     OwnerProfileStore,
     extract_rfc822_signals,
 )
+from .decision_provenance import normalize_decision_path
 from .oauth_runtime import current_google_access_token, current_microsoft_access_token
 
 APP_VERSION = "0.16.0"
 
-# The existing 0.15 composition root remains authoritative for security-sensitive services. 0.16
-# adds a narrow adaptive layer and swaps only the MailAgent reasoning implementation. Policy,
-# identity, approval, executor, mailbox and queue ownership remain untouched.
+# The existing composition root remains authoritative for security-sensitive services. 0.16 adds
+# a narrow adaptive layer and swaps only the MailAgent reasoning implementation. Policy, identity,
+# approval, executor, mailbox and queue ownership remain untouched.
 base.APP_VERSION = APP_VERSION
 base.app.version = APP_VERSION
 
@@ -43,6 +45,54 @@ adaptive_mail_agent = AdaptiveMailAgent(
 )
 base.mail_agent = adaptive_mail_agent
 base.agent_runtime.mail_agent = adaptive_mail_agent
+
+
+def _install_decision_path_provenance() -> None:
+    """Correct the legacy `llm` explainability slot without changing runtime authority.
+
+    AgentRuntime owns the policy/artifact flow and remains untouched. The adaptive MailAgent marks
+    the real decision origin in proposal metadata. We normalize only the returned and persisted
+    decision-path presentation so deterministic skips cannot be reported as an LLM call.
+    """
+
+    if getattr(base.agent_runtime, "_adaptive_decision_path_installed", False):
+        return
+
+    original_record_analysis = base.conversation_store.record_analysis
+
+    def record_analysis_with_provenance(**kwargs: Any):
+        proposal = kwargs.get("proposal")
+        if isinstance(proposal, MailActionProposal):
+            kwargs["decision_path"] = normalize_decision_path(
+                kwargs.get("decision_path"),
+                proposal,
+            )
+        return original_record_analysis(**kwargs)
+
+    base.conversation_store.record_analysis = record_analysis_with_provenance  # type: ignore[method-assign]
+
+    original_analyze_message = base.agent_runtime.analyze_message
+
+    async def analyze_message_with_provenance(message: Any, *args: Any, **kwargs: Any):
+        payload = await original_analyze_message(message, *args, **kwargs)
+        if not isinstance(payload, dict):
+            return payload
+        try:
+            proposal = MailActionProposal.model_validate(payload.get("proposal") or {})
+        except Exception:
+            return payload
+        normalized = normalize_decision_path(payload.get("decision_path"), proposal)
+        payload["decision_path"] = normalized
+        conversation = payload.get("conversation")
+        if isinstance(conversation, dict):
+            conversation["decision_path"] = normalized
+        return payload
+
+    base.agent_runtime.analyze_message = analyze_message_with_provenance  # type: ignore[method-assign]
+    base.agent_runtime._adaptive_decision_path_installed = True  # type: ignore[attr-defined]
+
+
+_install_decision_path_provenance()
 
 owner_profile_service = OwnerProfileService(
     store=owner_profile_store,
