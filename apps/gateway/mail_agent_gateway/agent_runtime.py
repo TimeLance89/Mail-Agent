@@ -28,6 +28,7 @@ from mail_agent_core.signature import stamp_outgoing_proposal
 from .action_executor import MailActionExecutor
 from .agent_queue import AgentWorkQueue
 from .audit import AuditLog
+from .conversation_store import ConversationStore
 from .mail_store import MailStore
 from .state import JsonStateStore
 
@@ -58,6 +59,7 @@ class AgentRuntime:
         providers: dict[str, Any],
         audit_log: AuditLog,
         action_executor: MailActionExecutor | None = None,
+        conversation_store: ConversationStore | None = None,
         brain: AgentBrain | None = None,
         activity: AgentActivityStore | None = None,
         shadow_reports: ShadowReportStore | None = None,
@@ -69,6 +71,7 @@ class AgentRuntime:
         self.providers = providers
         self.audit_log = audit_log
         self.action_executor = action_executor
+        self.conversations = conversation_store or ConversationStore(mail_store.path.parent / "conversations.db")
         self.brain = brain or AgentBrain(mail_store.path.parent / "brain")
         self.activity = activity or AgentActivityStore(mail_store.path.parent / "agent-activity.jsonl")
         self.shadow_reports = shadow_reports or ShadowReportStore(
@@ -250,6 +253,7 @@ class AgentRuntime:
         trace_trigger: str = "manual",
         simulation: bool = False,
         shadow_run_id: str | None = None,
+        coalesced_count: int = 1,
     ) -> dict[str, Any]:
         config = self._configuration()
         provider_name = str(config["provider"])
@@ -338,12 +342,24 @@ class AgentRuntime:
             analysis.proposal.priority = priority
             analysis.proposal.category = category
 
+            if category == MailCategory.COLD_OUTREACH and any(
+                prior.sender.strip().casefold() == message.sender.strip().casefold()
+                for prior in message.thread_context
+            ):
+                metadata = dict(analysis.proposal.metadata)
+                metadata["cold_outreach_guard"] = "prior_thread_contact"
+                analysis.proposal.metadata = metadata
+                analysis.proposal.category = MailCategory.SALES
+                category = MailCategory.SALES
+
             category_action = MailHandlingAction.NONE
             if rule_mode == RuleMode.NORMAL:
                 if category == MailCategory.NEWSLETTER:
                     category_action = behavior.newsletter_action
                 elif category == MailCategory.ADVERTISING:
                     category_action = behavior.advertising_action
+                elif category == MailCategory.COLD_OUTREACH:
+                    category_action = behavior.cold_outreach_action
             if category_action != MailHandlingAction.NONE:
                 metadata = dict(analysis.proposal.metadata)
                 metadata["deterministic_category_handling"] = category.value
@@ -436,7 +452,33 @@ class AgentRuntime:
                 elif analysis.proposal.action in _REMOTE_MUTATIONS:
                     if self.action_executor is None:
                         raise RuntimeError("Remote action executor is not configured")
+                    source_before = (
+                        self.mail_store.get_message(message.mailbox_id, message.message_id)
+                        if message.message_id else None
+                    )
                     execution = await self.action_executor.execute_direct(analysis.proposal)
+                    if source_before and (
+                        analysis.proposal.action == MailActionType.MARK_READ
+                        or (analysis.proposal.action == MailActionType.ARCHIVE and str(source_before.get("connector") or "imap") in {"gmail_api", "microsoft_graph"})
+                    ):
+                        undo = self.conversations.create_undo(
+                            mailbox_id=message.mailbox_id,
+                            message_id=message.message_id,
+                            thread_id=message.thread_id,
+                            action=analysis.proposal.action.value,
+                            payload={
+                                "source": {
+                                    key: source_before.get(key)
+                                    for key in ("mailbox_id", "uid", "remote_id", "internet_message_id", "thread_key", "connector")
+                                },
+                                "execution": {
+                                    key: execution.get(key)
+                                    for key in ("connector", "action", "remote_id", "source_remote_id", "destination")
+                                },
+                            },
+                            ttl_seconds=behavior.safe_action_undo_seconds,
+                        )
+                        execution = {**execution, "undo": undo}
                 if (
                     behavior.auto_create_drafts
                     and analysis.proposal.body
@@ -516,6 +558,34 @@ class AgentRuntime:
                 reason = artifact_detail
             self.activity.finish(trace_id, outcome=outcome, reason=reason)
 
+            decision_path = [
+                {"stage": "rule", "result": rule_mode.value, "detail": "Deterministische Besitzerregel geprüft."},
+                {"stage": "llm", "result": analysis.proposal.action.value, "detail": analysis.proposal.reason or analysis.proposal.summary},
+                {"stage": "classification", "result": analysis.proposal.category.value, "detail": f"Priorität {analysis.proposal.priority.value}; Konfidenz {analysis.proposal.confidence:.2f}."},
+                {"stage": "policy", "result": "allowed" if analysis.policy.allowed else "blocked", "detail": analysis.policy.reason},
+                {"stage": "artifact", "result": outcome, "detail": reason},
+            ]
+            conversation = None
+            pattern_suggestion = None
+            if not simulation:
+                conversation = self.conversations.record_analysis(
+                    message=message,
+                    proposal=analysis.proposal,
+                    decision_path=decision_path,
+                    to_reply_days=behavior.follow_up_to_reply_days,
+                    awaiting_reply_days=behavior.follow_up_awaiting_reply_days,
+                    coalesced_count=coalesced_count,
+                )
+                if behavior.sender_pattern_learning:
+                    pattern_suggestion = self.conversations.record_sender_observation(
+                        mailbox_id=message.mailbox_id,
+                        message_id=message.message_id,
+                        sender=message.sender,
+                        category=analysis.proposal.category.value,
+                        min_samples=behavior.sender_pattern_min_samples,
+                        confidence_threshold=behavior.sender_pattern_confidence,
+                    )
+
             payload = analysis.model_dump(mode="json")
             payload["approval"] = approval
             payload["draft"] = draft
@@ -529,6 +599,9 @@ class AgentRuntime:
             payload["planned_artifacts"] = planned_artifacts
             payload["simulated_outcome"] = simulated_outcome
             payload["side_effects"] = 0 if simulation else int(bool(approval or draft or execution))
+            payload["decision_path"] = decision_path
+            payload["conversation"] = conversation
+            payload["sender_pattern_suggestion"] = pattern_suggestion
             return payload
         except Exception as exc:
             self.activity.finish(trace_id, outcome="error", reason=str(exc))
@@ -796,13 +869,14 @@ class AgentRuntime:
         behavior: AgentBehaviorSettings,
     ) -> dict[str, Any]:
         pending_before = self.shadow_queue.pending_count(mailbox_id)
-        messages = self.shadow_queue.list_pending(mailbox_id, behavior.max_messages_per_cycle)
+        messages = (self.shadow_queue.list_pending_threads(mailbox_id, behavior.max_messages_per_cycle) if behavior.thread_coalescing else self.shadow_queue.list_pending(mailbox_id, behavior.max_messages_per_cycle))
         run_id = "shadow_" + uuid.uuid4().hex
         started_at = _utc_now()
         results: list[dict[str, Any]] = []
         errors = 0
         for item in messages:
             context = self._message_context(item, mailbox_id)
+            claimed_ids = list(item.get("_coalesced_message_ids") or [context.message_id])
             try:
                 result = await self._simulate_item(
                     item,
@@ -810,13 +884,11 @@ class AgentRuntime:
                     trigger="shadow_cycle",
                     run_id=run_id,
                 )
-                self.mail_store.record_shadow_processing(
-                    mailbox_id,
-                    context.message_id,
-                    status="processed",
-                    proposal_action=result.get("action"),
-                    confidence=result.get("confidence"),
-                )
+                for claimed_id in claimed_ids:
+                    self.mail_store.record_shadow_processing(
+                        mailbox_id, claimed_id, status="processed",
+                        proposal_action=result.get("action"), confidence=result.get("confidence"),
+                    )
             except Exception as exc:
                 errors += 1
                 result = {
@@ -828,12 +900,10 @@ class AgentRuntime:
                     "error": str(exc),
                     "reason": "Shadow-Analyse fehlgeschlagen.",
                 }
-                self.mail_store.record_shadow_processing(
-                    mailbox_id,
-                    context.message_id,
-                    status="error",
-                    error=str(exc),
-                )
+                for claimed_id in claimed_ids:
+                    self.mail_store.record_shadow_processing(
+                        mailbox_id, claimed_id, status="error", error=str(exc),
+                    )
             results.append(result)
 
         report = self.shadow_reports.save_report(
@@ -928,6 +998,47 @@ class AgentRuntime:
                 )
         return marked, errors
 
+
+    async def _reconcile_followups(
+        self,
+        mailbox_id: str,
+        *,
+        behavior: AgentBehaviorSettings,
+        profile: AgentProfile,
+        limit: int = 25,
+    ) -> tuple[int, int]:
+        due = self.conversations.due_followups(mailbox_id, limit=limit)
+        if not behavior.follow_up_auto_draft:
+            return len(due), 0
+        config = self._configuration()
+        provider = self.providers.get(str(config.get("provider") or ""))
+        if provider is None:
+            return len(due), 0
+        identity = self.identity_manager.load()
+        model = str(config.get("model") or "")
+        created = 0
+        for thread in due:
+            if thread.get("status") != "awaiting_reply" or thread.get("followup_draft_id"):
+                continue
+            source_id = str(thread.get("last_message_id") or "")
+            source = self.mail_store.get_message(mailbox_id, source_id) if source_id else None
+            if source is None:
+                continue
+            context = self._with_thread_context(self._message_context(source, mailbox_id), behavior)
+            try:
+                proposal = await self.mail_agent.draft_follow_up(
+                    profile=profile, provider=provider, model=model, message=context,
+                    identity=identity, sign_payload=self.identity_manager.sign,
+                    brain_context=self.brain.build_context(context),
+                    rationale=str(thread.get("rationale") or ""),
+                )
+                draft = self.mail_store.create_draft(proposal)
+                self.conversations.mark_followup_draft(mailbox_id, str(thread["thread_id"]), str(draft["draft_id"]))
+                created += 1
+            except Exception as exc:
+                self.audit_log.append("follow_up_draft_failed", details={"mailbox_id": mailbox_id, "thread_id": thread.get("thread_id"), "error": str(exc)})
+        return len(due), created
+
     async def run_mailbox(self, mailbox_id: str, *, force: bool = False) -> dict[str, Any]:
         config = self._configuration()
         behavior = self.behavior(config)
@@ -969,7 +1080,7 @@ class AgentRuntime:
         if behavior.execution_mode == AgentExecutionMode.SHADOW:
             return await self._run_shadow_mailbox(mailbox_id, behavior=behavior)
 
-        messages = self.work_queue.list_pending(mailbox_id, behavior.max_messages_per_cycle)
+        messages = (self.work_queue.list_pending_threads(mailbox_id, behavior.max_messages_per_cycle) if behavior.thread_coalescing else self.work_queue.list_pending(mailbox_id, behavior.max_messages_per_cycle))
         processed = 0
         ignored = 0
         urgent = 0
@@ -984,6 +1095,8 @@ class AgentRuntime:
         model = str(config.get("model") or "")
         for item in messages:
             context = self._message_context(item, mailbox_id)
+            claimed_ids = list(item.get("_coalesced_message_ids") or [context.message_id])
+            coalesced_count = int(item.get("_coalesced_count") or len(claimed_ids) or 1)
             rule = matching_rule(context.sender, behavior)
             if rule is not None and rule.mode == RuleMode.IGNORE:
                 trace_id = self.activity.begin_message(
@@ -1008,11 +1121,8 @@ class AgentRuntime:
                     outcome="ignored",
                     reason="Eine Besitzerregel hat die Mail vor der LLM-Analyse ausgeschlossen.",
                 )
-                self.mail_store.record_agent_processing(
-                    mailbox_id,
-                    context.message_id,
-                    status="ignored_rule",
-                )
+                for claimed_id in claimed_ids:
+                    self.mail_store.record_agent_processing(mailbox_id, claimed_id, status="ignored_rule")
                 ignored += 1
                 continue
             try:
@@ -1020,6 +1130,7 @@ class AgentRuntime:
                     context,
                     create_artifacts=True,
                     trace_trigger="cycle",
+                    coalesced_count=coalesced_count,
                 )
                 proposal = result["proposal"]
                 if proposal.get("priority") == "urgent":
@@ -1032,22 +1143,19 @@ class AgentRuntime:
                     drafts += 1 if result.get("draft") else 0
                     approvals += 1 if result.get("approval") else 0
                     executed += 1 if result.get("execution") else 0
-                self.mail_store.record_agent_processing(
-                    mailbox_id,
-                    context.message_id,
-                    status=status,
-                    proposal_action=proposal.get("action"),
-                    confidence=float(proposal.get("confidence") or 0.0),
-                )
+                for claimed_id in claimed_ids:
+                    self.mail_store.record_agent_processing(
+                        mailbox_id, claimed_id, status=status,
+                        proposal_action=proposal.get("action"),
+                        confidence=float(proposal.get("confidence") or 0.0),
+                    )
                 processed += 1
             except Exception as exc:
                 errors += 1
-                self.mail_store.record_agent_processing(
-                    mailbox_id,
-                    context.message_id,
-                    status="error",
-                    error=str(exc),
-                )
+                for claimed_id in claimed_ids:
+                    self.mail_store.record_agent_processing(
+                        mailbox_id, claimed_id, status="error", error=str(exc),
+                    )
                 self.audit_log.append(
                     "agent_message_failed",
                     details={
@@ -1059,6 +1167,9 @@ class AgentRuntime:
 
         marked_read, postprocess_errors = await self._reconcile_processed_read(
             mailbox_id, behavior=behavior, profile=profile, limit=100
+        )
+        due_followups, followup_drafts = await self._reconcile_followups(
+            mailbox_id, behavior=behavior, profile=profile, limit=25
         )
         pending_after = self.work_queue.pending_count(mailbox_id)
         summary = {
@@ -1074,6 +1185,8 @@ class AgentRuntime:
             "errors": errors,
             "marked_read": marked_read,
             "postprocess_errors": postprocess_errors,
+            "due_followups": due_followups,
+            "followup_drafts": followup_drafts,
             "pending_before": pending_before,
             "pending_after": pending_after,
         }

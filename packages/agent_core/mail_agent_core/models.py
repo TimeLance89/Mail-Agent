@@ -25,6 +25,13 @@ class AgentExecutionMode(StrEnum):
     SHADOW = "shadow"
 
 
+class ConversationStatus(StrEnum):
+    TO_REPLY = "to_reply"
+    AWAITING_REPLY = "awaiting_reply"
+    FYI = "fyi"
+    ACTIONED = "actioned"
+
+
 class MailActionType(StrEnum):
     READ = "read"
     SUMMARIZE = "summarize"
@@ -53,6 +60,7 @@ class MailCategory(StrEnum):
     SALES = "sales"
     NEWSLETTER = "newsletter"
     ADVERTISING = "advertising"
+    COLD_OUTREACH = "cold_outreach"
     NOTIFICATION = "notification"
     SECURITY = "security"
     OTHER = "other"
@@ -106,6 +114,15 @@ class AgentBehaviorSettings(BaseModel):
     mark_processed_read: bool = True
     newsletter_action: MailHandlingAction = MailHandlingAction.NONE
     advertising_action: MailHandlingAction = MailHandlingAction.NONE
+    cold_outreach_action: MailHandlingAction = MailHandlingAction.NONE
+    thread_coalescing: bool = True
+    follow_up_to_reply_days: int | None = Field(default=2, ge=1, le=60)
+    follow_up_awaiting_reply_days: int | None = Field(default=4, ge=1, le=60)
+    follow_up_auto_draft: bool = True
+    sender_pattern_learning: bool = True
+    sender_pattern_min_samples: int = Field(default=6, ge=3, le=50)
+    sender_pattern_confidence: float = Field(default=0.90, ge=0.5, le=1.0)
+    safe_action_undo_seconds: int = Field(default=10, ge=5, le=120)
     minimum_confidence: float = Field(default=0.72, ge=0.0, le=1.0)
     max_messages_per_cycle: int = Field(default=20, ge=1, le=200)
     thread_context_messages: int = Field(default=8, ge=0, le=30)
@@ -145,6 +162,8 @@ class MailActionProposal(BaseModel):
     priority: MailPriority = MailPriority.NORMAL
     category: MailCategory = MailCategory.OTHER
     needs_reply: bool = False
+    conversation_status: ConversationStatus | None = None
+    conversation_rationale: str = Field(default="", max_length=1200)
     metadata: dict[str, Any] = Field(default_factory=dict)
 
 

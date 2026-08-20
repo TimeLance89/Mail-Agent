@@ -67,6 +67,24 @@ class AttentionResolveRequest(BaseModel):
     actor: str = Field(default="local-user", min_length=1, max_length=200)
 
 
+class ConversationSnoozeRequest(BaseModel):
+    mailbox_id: str = Field(min_length=1, max_length=128)
+    thread_id: str = Field(min_length=1, max_length=1024)
+    until: str | None = Field(default=None, max_length=80)
+    actor: str = Field(default="local-user", min_length=1, max_length=200)
+
+
+class SenderPatternDecisionRequest(BaseModel):
+    mailbox_id: str = Field(min_length=1, max_length=128)
+    sender: str = Field(min_length=3, max_length=320)
+    category: MailCategory
+    actor: str = Field(default="local-user", min_length=1, max_length=200)
+
+
+class UndoActionRequest(BaseModel):
+    actor: str = Field(default="local-user", min_length=1, max_length=200)
+
+
 class AgentRunRequest(BaseModel):
     mailbox_id: str | None = Field(default=None, max_length=128)
     force: bool = False
