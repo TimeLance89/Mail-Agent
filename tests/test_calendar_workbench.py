@@ -61,6 +61,13 @@ def test_calendar_mail_suggestions_are_actionable_but_side_effect_free_until_use
     assert "Freie Zeiten antworten" in source
 
 
+def test_shared_writer_without_private_access_is_not_labeled_readonly():
+    source = MAIL_SUGGESTIONS.read_text(encoding="utf-8")
+    assert "writerwithoutprivateaccess" in source
+    assert "correctSharedCalendarRoleLabels" in source
+    assert "nur lesen" in source
+
+
 def test_calendar_connect_opens_popup_before_async_oauth_start():
     source = CALENDAR.read_text(encoding="utf-8")
     popup = source.index("window.open('about:blank'")
