@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import re
+from collections import Counter
 from contextvars import ContextVar
 from datetime import UTC, datetime, timedelta
 from email.utils import parseaddr
@@ -181,6 +182,17 @@ class ReleaseOwnerProfileStore(OwnerProfileStore):
 
 
 class ReleaseEfficiencySignalStore(EfficiencySignalStore):
+    @staticmethod
+    def _token_coverage(sources: dict[str, int]) -> str:
+        known = {key for key, count in sources.items() if count and key in {"provider_reported", "estimated"}}
+        if known == {"provider_reported"}:
+            return "provider_reported"
+        if known == {"estimated"}:
+            return "estimated"
+        if known:
+            return "mixed"
+        return "unknown"
+
     def summary(self, *, days: int = 7):
         result = super().summary(days=days)
         since = (
@@ -197,18 +209,75 @@ class ReleaseEfficiencySignalStore(EfficiencySignalStore):
                 (since,),
             ).fetchall()
         sources = {str(row["token_source"]): int(row["count"]) for row in rows}
-        known = {key for key, count in sources.items() if count and key in {"provider_reported", "estimated"}}
-        if known == {"provider_reported"}:
-            coverage = "provider_reported"
-        elif known == {"estimated"}:
-            coverage = "estimated"
-        elif known:
-            coverage = "mixed"
-        else:
-            coverage = "unknown"
         result["token_sources"] = sources
-        result["token_coverage"] = coverage
+        result["token_coverage"] = self._token_coverage(sources)
         return result
+
+    def calendar_day_summary(self) -> dict[str, Any]:
+        """Return a self-consistent UTC calendar-day summary, not a rolling 24h window."""
+
+        start = datetime.now(UTC).replace(hour=0, minute=0, second=0, microsecond=0).isoformat()
+        with self._connect() as conn:
+            rows = [
+                dict(row)
+                for row in conn.execute(
+                    "SELECT * FROM usage_events WHERE at>=? ORDER BY at DESC",
+                    (start,),
+                ).fetchall()
+            ]
+
+        task_counts: Counter[str] = Counter()
+        route_counts: Counter[str] = Counter()
+        provider_counts: Counter[str] = Counter()
+        token_sources: Counter[str] = Counter()
+        prompt_total = 0
+        completion_total = 0
+        known_token_events = 0
+        duration_total = 0
+        duration_count = 0
+        avoided = 0
+        estimated_avoided = 0
+        llm_calls = 0
+
+        for row in rows:
+            calls = int(row.get("llm_calls") or 0)
+            llm_calls += calls
+            task_counts[str(row.get("task_class") or "unknown")] += calls
+            route_counts[str(row.get("route") or "unknown")] += 1
+            if row.get("provider"):
+                provider_counts[str(row["provider"])] += calls
+            if row.get("prompt_tokens") is not None:
+                prompt_total += int(row["prompt_tokens"])
+                completion_total += int(row.get("completion_tokens") or 0)
+                known_token_events += 1
+                if calls > 0:
+                    token_sources[str(row.get("token_source") or "unknown")] += 1
+            if row.get("duration_ms") is not None:
+                duration_total += int(row["duration_ms"])
+                duration_count += 1
+            avoided += int(row.get("avoided_codex") or 0)
+            estimated_avoided += int(row.get("estimated_tokens_avoided") or 0)
+
+        decision_events = len(rows)
+        sources = dict(token_sources)
+        return {
+            "period_days": 1,
+            "decision_events": decision_events,
+            "today_events": decision_events,
+            "llm_calls": llm_calls,
+            "today_llm_calls": llm_calls,
+            "routes": dict(route_counts),
+            "providers": dict(provider_counts),
+            "tasks": dict(task_counts),
+            "codex_calls_avoided": avoided,
+            "codex_avoidance_percent": round((avoided / decision_events) * 100, 1) if decision_events else 0.0,
+            "prompt_tokens": prompt_total if known_token_events else None,
+            "completion_tokens": completion_total if known_token_events else None,
+            "token_coverage": self._token_coverage(sources),
+            "token_sources": sources,
+            "avg_duration_ms": round(duration_total / duration_count) if duration_count else None,
+            "estimated_tokens_avoided": estimated_avoided,
+        }
 
 
 class ReleaseAdaptiveMailAgent(AdaptiveMailAgent):
