@@ -176,3 +176,25 @@ def test_discard_refuses_already_approved_outbound_action(tmp_path: Path):
     store.decide_approval(approval["approval_id"], decision="approved", actor="owner")
     with pytest.raises(RuntimeError, match="bereits erteilt"):
         discard_draft(store, audit, draft["draft_id"], actor="owner")
+
+
+def test_sent_draft_leaves_active_list_after_successful_approval_execution(tmp_path: Path):
+    store = MailStore(tmp_path / "mail.db")
+    proposal = draft_proposal().model_copy(update={"action": MailActionType.SEND_REPLY})
+    draft = store.create_draft(proposal)
+    approval = store.enqueue_approval(
+        proposal,
+        PolicyDecision(allowed=True, requires_approval=True, risk="high", reason="owner approval"),
+    )
+    store.link_draft_approval(draft["draft_id"], approval["approval_id"], source_action="send_reply")
+    store.decide_approval(approval["approval_id"], decision="approved", actor="owner")
+    store.claim_approval_execution(approval["approval_id"])
+    store.complete_approval_execution(
+        approval["approval_id"],
+        {"connector": "test", "remote_id": "sent_1"},
+        success_status="sent",
+    )
+
+    assert store.get_draft(draft["draft_id"])["status"] == "sent"
+    install_active_draft_filter(store)
+    assert store.list_drafts() == []
