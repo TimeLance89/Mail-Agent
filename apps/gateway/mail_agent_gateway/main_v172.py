@@ -37,6 +37,21 @@ async def _prepare_mail_followup(
     )
 
 
+# Google can expose a shared calendar as writerWithoutPrivateAccess. It is writable even though
+# private event details stay hidden. Normalize the role at the authoritative service boundary so
+# UI labels and actual mutation checks cannot disagree.
+if not getattr(calendar_service, "_v172_shared_writer_patch", False):
+    async def _ensure_writable_calendar_v172(mailbox_id: str, calendar_id: str) -> dict[str, Any]:
+        meta = await calendar_service._calendar_meta(mailbox_id, calendar_id)  # noqa: SLF001
+        role = str(meta.get("access_role") or "").casefold()
+        if role not in {"owner", "writer", "writerwithoutprivateaccess"}:
+            raise PermissionError("The selected Google calendar is read-only")
+        return meta
+
+    calendar_service._ensure_writable_calendar = _ensure_writable_calendar_v172  # type: ignore[method-assign]  # noqa: SLF001
+    calendar_service._v172_shared_writer_patch = True  # type: ignore[attr-defined]
+
+
 if not getattr(calendar_service, "_v172_mail_followup_patch", False):
     _original_calendar_approve = calendar_service.approve
 
