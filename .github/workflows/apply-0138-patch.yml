@@ -21,7 +21,9 @@ jobs:
         with:
           python-version: '3.12'
       - name: Apply deterministic patch
-        run: python tools/apply_0138_patch.py
+        run: |
+          python tools/apply_0138_patch.py
+          git checkout HEAD -- .github/workflows/build-installers.yml
       - name: Commit implementation
         run: |
           git config user.name "github-actions[bot]"
