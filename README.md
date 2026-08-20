@@ -5,7 +5,7 @@ Google Calendar scheduling capability. It is not a general-purpose shell or brow
 produce typed proposals and the local gateway decides whether an action is read-only, requires human
 approval, or is denied.
 
-## Current preview: v0.17.0
+## Current preview: v0.17.1
 
 - Local FastAPI gateway on port `8765`
 - Separate public-identity registry service on port `8770`
@@ -15,12 +15,16 @@ approval, or is denied.
 - Provider abstraction with Ollama and Codex CLI adapters
 - Observer, Assistant, Copilot, and Autonomous mail-policy modes
 - Persistent mail drafts, approvals, audit traces, conversation state, and owner-controlled learning
+- Drafts can be explicitly discarded; an attached pending send approval is rejected atomically
 - Incremental Google Calendar OAuth capability on Google mailboxes
 - Calendar list, agenda, events, Free/Busy, daily briefing, and deterministic free-slot search
+- Simplified Calendar Assistant focused on the user's goal and required decision rather than API controls
+- Concrete appointment times from mail are checked directly against Google Free/Busy, including weekends
 - Calendar Concierge for read-only questions, clarification, and typed scheduling proposals
 - Mail-to-Calendar scheduling hints and availability-reply drafts
 - Separate approval-gated Calendar create/update/delete/invite execution
 - Calendar conflict re-checks, ETag stale-event protection, and idempotent create retries
+- Actionable Google Calendar permission/API diagnostics instead of generic 401/403 messages
 - Windows installer plus standalone Windows/Linux/macOS builds
 
 ## Security model
@@ -35,11 +39,16 @@ attendee notifications are also always human approval-gated, including in autono
 mail is untrusted scheduling context: it can contribute factual context but cannot authorize a Calendar
 mutation, invite an attendee, enable notifications, bypass approval, change policy, or modify identity.
 
+Discarding a draft is a local owner action, not a hard delete. MAIL-AGENT keeps its audit history. If
+the draft is linked to a still-pending send approval, both changes are committed atomically: the
+approval becomes rejected and the draft becomes discarded. Already sent or already approved outbound
+work cannot be silently discarded.
+
 Mailbox passwords and OAuth refresh tokens are encrypted at rest and are not written to `state.json`,
 the mail database, the Calendar approval database, or model-visible memory. See
 [`docs/SECURITY.md`](docs/SECURITY.md) for the detailed boundaries.
 
-## Google Calendar in 0.17
+## Google Calendar in 0.17.1
 
 A user with a connected Google mailbox can choose **Google Kalender verbinden**. MAIL-AGENT performs an
 incremental OAuth grant and requests the Calendar permissions it actually needs:
@@ -51,7 +60,22 @@ incremental OAuth grant and requests the Calendar permissions it actually needs:
 Existing Gmail authorization remains a separate capability. Tokens continue to use the local encrypted
 OAuth vault.
 
-After Calendar is connected, the **Kalender** work area can:
+The main **Kalender** work area is intentionally task-first. The normal flow is:
+
+1. tell MAIL-AGENT what should be checked or handled, or select a detected scheduling mail;
+2. MAIL-AGENT checks the authoritative Google Calendar facts;
+3. the UI shows one clear result/recommendation;
+4. only a real side effect asks for an explicit owner approval.
+
+Technical controls such as calendar selection, refresh and generic free-slot search live under
+**Optionen & Details** instead of competing with the primary workflow.
+
+When an email contains one unambiguous concrete date and time, MAIL-AGENT checks that exact interval
+first. This direct Free/Busy check is independent of the generic Monday–Friday work-slot finder, so a
+request such as Saturday 22.08.2026 at 16:00 is checked on Saturday rather than being replaced by Friday
+alternatives. If the requested time is occupied, alternatives are searched on the same day first.
+
+The assistant can also:
 
 - show today's and upcoming appointments,
 - answer read-only questions about the schedule,
@@ -96,7 +120,7 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e '.[dev]'
 
 uvicorn mail_agent_registry.main:app --app-dir apps/registry --port 8770 --reload
-uvicorn mail_agent_gateway.main_v17:app --app-dir apps/gateway --port 8765 --reload
+uvicorn mail_agent_gateway.main_v171:app --app-dir apps/gateway --port 8765 --reload
 ```
 
 Open `http://127.0.0.1:8765`. The UI has no Node/npm runtime dependency.
@@ -155,19 +179,20 @@ docs/
   INSTALLATION.md
 ```
 
-## 0.17 API highlights
+## 0.17.1 API highlights
 
 - `POST /v1/oauth/google/calendar/start` — incremental Google Calendar OAuth
 - `GET /v1/calendar/status` — Calendar capabilities without exposing credentials
 - `GET /v1/calendar/calendars` / `events` — safe calendar/event reads
 - `POST /v1/calendar/freebusy` — raw Google availability query
-- `POST /v1/calendar/free-slots` — deterministic work-hour slot finder
+- `POST /v1/calendar/free-slots` — deterministic generic work-hour slot finder
 - `GET /v1/calendar/briefing` — today + upcoming free-slot briefing
 - `GET /v1/calendar/mail-suggestions` — side-effect-free scheduling hints from local mail
-- `POST /v1/calendar/concierge` — answer, clarify, or enqueue one typed Calendar proposal
+- `POST /v1/calendar/concierge` — exact-time check, answer, clarify, or enqueue one typed Calendar proposal
 - `POST /v1/calendar/mail-reply` — signed draft with gateway-rendered verified free slots
 - `GET /v1/calendar/approvals` — separate Calendar approval queue
 - `POST /v1/calendar/approvals/{id}/approve` / `reject` — human Calendar decision boundary
+- `POST /v1/drafts/{id}/discard` — audit-preserving owner discard; rejects a linked pending approval atomically
 
 ## Desktop experience
 
