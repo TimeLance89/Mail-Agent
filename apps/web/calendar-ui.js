@@ -54,7 +54,7 @@
       .cal-fields{display:grid;grid-template-columns:1fr 1fr;gap:10px}.cal-field{display:grid;gap:6px}.cal-field.full{grid-column:1/-1}.cal-field span{font-size:12px;color:#91a4c2}.cal-field input,.cal-field select{width:100%;box-sizing:border-box;border:1px solid #2a3b56;background:#091321;color:#edf3ff;border-radius:10px;padding:10px 11px;outline:none}.cal-field input:focus,.cal-field select:focus{border-color:#5e82b7}
       .cal-actions{display:flex;gap:8px;flex-wrap:wrap;margin-top:12px}.cal-btn{border:1px solid #31445f;background:#132238;color:#eaf2ff;border-radius:10px;padding:9px 12px;cursor:pointer}.cal-btn.primary{background:#e8eef9;color:#0b1220;border-color:#e8eef9;font-weight:700}.cal-btn.danger{border-color:#6d3943;color:#ffbbc4;background:#24141a}.cal-btn:disabled{opacity:.5;cursor:default}
       .cal-list{display:grid;gap:8px;max-height:360px;overflow:auto}.cal-row{border:1px solid #22334c;border-radius:12px;padding:11px;background:#0a1422}.cal-row-top{display:flex;justify-content:space-between;gap:10px}.cal-row b{font-size:13px}.cal-row small{display:block;color:#8ca0bf;margin-top:4px}.cal-row-actions{display:flex;gap:6px;margin-top:8px}.cal-mini{font-size:11px;padding:6px 8px}
-      .cal-approval{border-left:3px solid #d9aa65}.cal-empty{color:#8195b4;font-size:13px;padding:12px 2px}.cal-note{font-size:12px;color:#8fa4c5;margin-top:10px;line-height:1.5}.cal-busy{margin-top:10px;border:1px solid #2b405c;border-radius:10px;padding:10px;color:#b9c8de;font-size:12px}
+      .cal-approval{border-left:3px solid #d9aa65}.cal-empty{color:#8195b4;font-size:13px;padding:12px 2px}.cal-note{font-size:12px;color:#8fa4c5;margin-top:10px;line-height:1.5}.cal-busy{margin-top:10px;border:1px solid #2b405c;border-radius:10px;padding:10px;color:#b9c8de;font-size:12px}.cal-agent{border:1px solid #304663;border-radius:14px;background:#0a1525;padding:13px;margin-bottom:14px}.cal-agent strong{display:block;margin-bottom:5px}.cal-agent small{display:block;color:#8fa4c5;margin-bottom:9px}
       @media(max-width:980px){.cal-grid{grid-template-columns:1fr}.cal-fields{grid-template-columns:1fr}}
     `;
     document.head.appendChild(style);
@@ -82,7 +82,8 @@
       </section>
       ${connected?`<div class="cal-grid">
         <section class="cal-card">
-          <div class="cal-head"><div><h3>Termin vorbereiten</h3><p>Der Agent erzeugt nur einen Vorschlag. Erst deine Freigabe schreibt zu Google.</p></div></div>
+          <div class="cal-agent"><strong>Kalender-Agent</strong><small>Beschreibe dein Ziel in natürlicher Sprache. Der Agent berücksichtigt vorhandene Termine und legt nur einen prüfbaren Vorschlag in die Freigabe-Queue.</small><label class="cal-field"><span>Auftrag</span><input id="calendar-agent-instruction" maxlength="8000" placeholder="z. B. Plane morgen Nachmittag einen freien 60-Minuten-Termin für Projekt X"></label><div class="cal-actions"><button class="cal-btn primary" id="calendar-agent-propose">Agent Vorschlag erstellen</button></div></div>
+          <div class="cal-head"><div><h3>Termin manuell vorbereiten</h3><p>Alternativ kannst du die Eckdaten selbst setzen. Auch hier schreibt erst deine Freigabe zu Google.</p></div></div>
           <div class="cal-fields">
             <label class="cal-field full"><span>Kalender</span><select id="calendar-id">${calendars.map(c=>`<option value="${esc(c.id)}" ${String(c.id)===String(state.calendarId)?'selected':''}>${esc(c.summary||c.id)}${c.primary?' · primär':''}</option>`).join('')}</select></label>
             <label class="cal-field full"><span>Titel</span><input id="calendar-title" maxlength="500" placeholder="z. B. Projektbesprechung"></label>
@@ -162,6 +163,18 @@
   }
 
   function formValue(id) { return document.getElementById(id)?.value || ''; }
+
+  async function askAgent() {
+    const instruction = formValue('calendar-agent-instruction').trim();
+    if (!instruction) throw new Error('Bitte beschreibe, was der Kalender-Agent vorbereiten soll.');
+    await api('/v1/calendar/assist', {
+      method:'POST',
+      body:JSON.stringify({mailbox_id:state.mailboxId, calendar_id:state.calendarId, instruction, actor:'local-user'}),
+    });
+    notify('Der Kalender-Agent hat einen Vorschlag erstellt. Bitte prüfe die Freigabe.');
+    await loadCalendarData();
+  }
+
   async function propose(action, eventId='') {
     let event = null;
     if (action !== 'delete') {
@@ -218,6 +231,7 @@
     root.querySelector('#calendar-connect')?.addEventListener('click', connect);
     root.querySelector('#calendar-refresh')?.addEventListener('click', refresh);
     root.querySelector('#calendar-id')?.addEventListener('change', async e => { state.calendarId=e.target.value; state.busyText=''; await loadCalendarData(); });
+    root.querySelector('#calendar-agent-propose')?.addEventListener('click', () => askAgent().catch(e=>notify(e.message,true)));
     root.querySelector('#calendar-freebusy')?.addEventListener('click', () => checkBusy().catch(e=>notify(e.message,true)));
     root.querySelector('#calendar-propose')?.addEventListener('click', () => propose(state.editingEventId?'update':'create', state.editingEventId).catch(e=>notify(e.message,true)));
     root.querySelector('#calendar-edit-cancel')?.addEventListener('click', () => { state.editingEventId=''; state.busyText=''; render(); });
