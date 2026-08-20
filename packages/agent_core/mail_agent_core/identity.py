@@ -94,7 +94,7 @@ class IdentityManager:
     def verify(*, public_key_b64: str, payload: bytes, signature_b64: str) -> bool:
         try:
             public = Ed25519PublicKey.from_public_bytes(base64.b64decode(public_key_b64))
-            public.verify(base64.b64decode(signature_b64), payload, signature_b64)
+            public.verify(base64.b64decode(signature_b64), payload)
             return True
         except (ValueError, TypeError):
             return False
