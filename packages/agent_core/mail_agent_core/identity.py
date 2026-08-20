@@ -24,7 +24,7 @@ class AgentIdentity:
     public_key: str
     fingerprint: str
     created_at: str
-    app_version: str = "0.15.0"
+    app_version: str = "0.16.0"
 
 
 class IdentityManager:
