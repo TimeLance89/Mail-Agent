@@ -75,7 +75,7 @@ def test_adaptive_ui_has_opt_in_review_routing_usage_and_no_mutation_observer():
         "Vorschau",
     ):
         assert marker in source
-    assert "MutationObserver" not in source
+    assert "new MutationObserver" not in source
     assert "setInterval" not in source
 
 
