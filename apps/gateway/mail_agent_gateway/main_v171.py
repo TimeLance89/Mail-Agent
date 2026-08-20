@@ -7,7 +7,8 @@ from fastapi import HTTPException
 
 from . import main_v17 as previous
 from .calendar_concierge_v171 import TargetedCalendarConcierge
-from .mail_store import utc_now
+from .draft_lifecycle_v171 import discard_draft as discard_draft_record
+from .draft_lifecycle_v171 import install_active_draft_filter
 from .schemas import DraftSubmitRequest
 
 APP_VERSION = "0.17.1"
@@ -19,9 +20,6 @@ previous.previous.APP_VERSION = APP_VERSION
 base.APP_VERSION = APP_VERSION
 base.app.version = APP_VERSION
 
-
-# Replace only the Calendar concierge. Mail policy, mail executor, identity and both approval
-# boundaries remain unchanged.
 calendar_concierge = TargetedCalendarConcierge(
     calendar_service=previous.calendar_service,
     model_router=previous.previous.model_router,
@@ -103,86 +101,18 @@ def _calendar_http_error_v171(exc: Exception, *, operation: str) -> HTTPExceptio
 
 
 previous._calendar_http_error = _calendar_http_error_v171
-
-
-# 0.17.1 adds a soft-discard state. Keep discarded drafts for local audit/history while hiding them
-# from the ordinary work queue. Pull a wider window first so discarded recent rows do not starve
-# older active drafts from the requested limit.
-if not getattr(base.mail_store, "_v171_active_draft_filter", False):
-    _list_drafts_original = base.mail_store.list_drafts
-
-    def _list_active_drafts(mailbox_id: str | None = None, limit: int = 100):
-        requested = max(1, min(int(limit), 500))
-        items = _list_drafts_original(mailbox_id, 500)
-        return [item for item in items if item.get("status") != "discarded"][:requested]
-
-    base.mail_store.list_drafts = _list_active_drafts  # type: ignore[method-assign]
-    base.mail_store._v171_active_draft_filter = True  # type: ignore[attr-defined]
-
-
-def _discard_draft(draft_id: str, *, actor: str) -> dict[str, Any]:
-    store = base.mail_store
-    now = utc_now()
-    rejected_pending = False
-    approval_id: str | None = None
-    with store._lock, store._connect() as conn:  # noqa: SLF001 - same local persistence boundary
-        row = conn.execute("SELECT * FROM drafts WHERE draft_id=?", (draft_id,)).fetchone()
-        if row is None:
-            raise KeyError(draft_id)
-        if row["status"] == "sent":
-            raise RuntimeError("Ein bereits gesendeter Entwurf kann nicht verworfen werden")
-        if row["status"] == "discarded":
-            return store._draft_row(row)  # noqa: SLF001
-
-        approval_id = row["approval_id"]
-        if approval_id:
-            approval = conn.execute(
-                "SELECT status, execution_status FROM approvals WHERE approval_id=?",
-                (approval_id,),
-            ).fetchone()
-            if approval is None:
-                raise RuntimeError("Die verknüpfte Freigabe des Entwurfs fehlt")
-            if approval["status"] == "pending":
-                conn.execute(
-                    """
-                    UPDATE approvals
-                       SET status='rejected', decided_at=?, decided_by=?, execution_status='not_applicable'
-                     WHERE approval_id=? AND status='pending'
-                    """,
-                    (now, actor, approval_id),
-                )
-                rejected_pending = True
-            elif approval["status"] != "rejected":
-                raise RuntimeError(
-                    "Die Freigabe wurde bereits erteilt. Prüfe zuerst den Ausführungsstatus, bevor der Entwurf verworfen wird."
-                )
-
-        conn.execute(
-            """
-            UPDATE drafts
-               SET status='discarded', updated_at=?, edited_by=?
-             WHERE draft_id=?
-            """,
-            (now, actor, draft_id),
-        )
-        updated = conn.execute("SELECT * FROM drafts WHERE draft_id=?", (draft_id,)).fetchone()
-
-    base.audit_log.append(
-        "draft_discarded",
-        actor=actor,
-        details={
-            "draft_id": draft_id,
-            "approval_id": approval_id,
-            "pending_approval_rejected": rejected_pending,
-        },
-    )
-    return store._draft_row(updated)  # noqa: SLF001
+install_active_draft_filter(base.mail_store)
 
 
 @base.app.post("/v1/drafts/{draft_id}/discard")
 async def discard_draft(draft_id: str, body: DraftSubmitRequest) -> dict[str, Any]:
     try:
-        draft = _discard_draft(draft_id, actor=body.actor)
+        draft = discard_draft_record(
+            base.mail_store,
+            base.audit_log,
+            draft_id,
+            actor=body.actor,
+        )
         return {"draft": base.draft_service.public_draft(draft), "discarded": True}
     except KeyError as exc:
         raise HTTPException(status_code=404, detail="Draft not found") from exc
