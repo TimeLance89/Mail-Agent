@@ -61,6 +61,16 @@ class PolicyEngine:
         if action in self._LOW_IMPACT:
             return PolicyDecision(allowed=True, requires_approval=False, risk="low", reason="Low-impact action")
 
+        # Assistant mode means "may propose, may not execute". A signed SEND/FORWARD proposal is
+        # therefore valid only as a human-approval item; it still has no direct execution path.
+        if action in {MailActionType.SEND_REPLY, MailActionType.FORWARD}:
+            return PolicyDecision(
+                allowed=True,
+                requires_approval=True,
+                risk="high",
+                reason="Outbound mail proposal requires explicit human approval",
+            )
+
         if profile.autonomy_mode == AutonomyMode.ASSISTANT:
             return PolicyDecision(
                 allowed=False,
