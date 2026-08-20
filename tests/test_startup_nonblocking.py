@@ -22,12 +22,15 @@ def test_static_startup_shell_is_present_before_javascript_boot():
 
 def test_startup_guard_runs_immediately_after_main_app():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
-    assert "/assets/startup-rescue.js?v=0.13.8" in index
-    assert index.index("/assets/app.js?v=0.13.8") < index.index(
-        "/assets/startup-rescue.js?v=0.13.8"
+    assert "/assets/startup-rescue.js?v=0.13.9" in index
+    assert index.index("/assets/app.js?v=0.13.9") < index.index(
+        "/assets/startup-rescue.js?v=0.13.9"
     )
-    assert index.index("/assets/startup-rescue.js?v=0.13.8") < index.index(
-        "/assets/llm-model-settings-v2.js?v=0.13.8"
+    assert index.index("/assets/startup-rescue.js?v=0.13.9") < index.index(
+        "/assets/mail-provider-setup.js?v=0.13.9"
+    )
+    assert index.index("/assets/mail-provider-setup.js?v=0.13.9") < index.index(
+        "/assets/llm-model-settings-v2.js?v=0.13.9"
     )
 
 
@@ -36,13 +39,17 @@ def test_every_web_asset_is_cache_busted_for_the_hotfix():
     for asset in (
         "styles.css",
         "agent-settings.css",
+        "attention-center.css",
+        "mail-provider-setup.css",
         "app.js",
         "startup-rescue.js",
+        "mail-provider-setup.js",
         "llm-model-settings-v2.js",
         "dashboard-live.js",
+        "attention-center.js",
         "desktop-links.js",
     ):
-        assert f"/assets/{asset}?v=0.13.8" in index
+        assert f"/assets/{asset}?v=0.13.9" in index
 
 
 def test_installed_dashboard_can_render_before_optional_provider_enrichment_finishes():
@@ -79,11 +86,14 @@ def test_oauth_provider_status_is_optional_bootstrap_enrichment():
 def test_ui_observers_cannot_recurse_on_their_own_dom_updates():
     dashboard = DASHBOARD_LIVE.read_text(encoding="utf-8")
     desktop = DESKTOP_LINKS.read_text(encoding="utf-8")
+    provider = (ROOT / "apps/web/mail-provider-setup.js").read_text(encoding="utf-8")
 
     assert "observer.observe(appRoot, { childList: true });" in dashboard
     assert "observer.observe(app, { childList: true });" in desktop
+    assert "observe(app, {childList:true})" in provider
     assert "subtree: true" not in dashboard
     assert "subtree: true" not in desktop
+    assert "subtree: true" not in provider
     assert "if (kicker.textContent !== text) kicker.textContent = text;" in dashboard
     assert "if (footer && footer.textContent !== text) footer.textContent = text;" in desktop
 
@@ -92,7 +102,7 @@ def test_startup_guard_javascript_syntax():
     node = shutil.which("node")
     if not node:
         pytest.skip("Node.js is not available")
-    for source in (STARTUP_GUARD, DASHBOARD_LIVE, DESKTOP_LINKS):
+    for source in (STARTUP_GUARD, DASHBOARD_LIVE, DESKTOP_LINKS, ROOT / "apps/web/mail-provider-setup.js"):
         result = subprocess.run(
             [node, "--check", str(source)],
             capture_output=True,
