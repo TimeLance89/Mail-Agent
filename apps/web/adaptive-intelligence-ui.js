@@ -1,4 +1,4 @@
-/* MAIL-AGENT 0.16.1 · Owner Intelligence & Efficiency. No DOM MutationObserver by design. */
+/* MAIL-AGENT Owner Intelligence & Efficiency. No DOM MutationObserver by design. */
 (() => {
   const state = { status:null, usage:null, loading:false, lastUsageAt:0 };
   const roles = [
@@ -75,7 +75,6 @@
 
   function mount() {
     if (!installed || !state.status) return;
-    document.querySelectorAll('.wb-build').forEach(el=>el.textContent='0.16.1');
     const host=document.querySelector('.wb-content');
     if (!host) return;
     document.getElementById('ai16-mounted')?.remove();

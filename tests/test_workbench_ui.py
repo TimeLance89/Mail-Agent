@@ -34,6 +34,7 @@ def test_workbench_preserves_direct_actions_and_inherits_existing_dashboard_bind
         "data-draft-edit",
         "data-draft-submit",
         "/v1/attention?limit=200",
+        "/v1/briefing?limit=20",
         "/v1/attention/resolve",
         "/v1/settings/behavior",
         "mark_processed_read",

@@ -1,9 +1,13 @@
 # MAIL-AGENT
 
-MAIL-AGENT is a local-first AI assistant for email workflows with an optional, separately permissioned
-Google Calendar scheduling capability. It is not a general-purpose shell or browser agent: models
-produce typed proposals and the local gateway decides whether an action is read-only, may be executed
-under the configured autonomy policy, requires human approval, or is denied.
+MAIL-AGENT is becoming a local-first personal operations agent: it removes routine mail, prepares
+replies and decisions, organizes appointments and commitments, and presents the remaining human work
+in one daily briefing. It is designed for normal users rather than as another technical mail dashboard.
+
+It is not a general-purpose shell or browser agent. Models produce typed proposals and the local
+gateway decides whether an action is read-only, may be executed under the configured autonomy policy,
+requires human approval, or is denied. The product direction and delivery sequence are documented in
+[`docs/PRODUCT_DIRECTION.md`](docs/PRODUCT_DIRECTION.md).
 
 ## Current preview: v0.17.3
 
