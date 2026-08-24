@@ -418,6 +418,31 @@ jobs:
             dist/Mail-Agent-macOS.zip
           if-no-files-found: ignore
 
+  tag-version:
+    if: github.ref == 'refs/heads/main'
+    needs: [windows, standalone]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Tag verified version
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          TAG="v${VERSION}"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG}" >/dev/null 2>&1; then
+            echo "${TAG} already exists; nothing to do."
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git tag -a "${TAG}" -m "MAIL-AGENT ${TAG}"
+          git push origin "refs/tags/${TAG}"
+
   publish-version:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [windows, standalone]

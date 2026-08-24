@@ -105,3 +105,6 @@ def test_release_version_is_synchronized_for_0180():
     assert '"apps/gateway/mail_agent_gateway/main.py"' in workflow
     assert '"apps/launcher/mail_agent_launcher/main.py"' in workflow
     assert "Could not synchronize APP_VERSION" in workflow
+    assert "tag-version:" in workflow
+    assert 'TAG="v${VERSION}"' in workflow
+    assert "publish-version:" in workflow
