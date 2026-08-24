@@ -1,11 +1,21 @@
 # MAIL-AGENT
 
-MAIL-AGENT is a local-first AI assistant for email workflows with an optional, separately permissioned
-Google Calendar scheduling capability. It is not a general-purpose shell or browser agent: models
-produce typed proposals and the local gateway decides whether an action is read-only, may be executed
-under the configured autonomy policy, requires human approval, or is denied.
+MAIL-AGENT is becoming a local-first personal operations agent: it removes routine mail, prepares
+replies and decisions, organizes appointments and commitments, and presents the remaining human work
+in one daily briefing. It is designed for normal users rather than as another technical mail dashboard.
 
-## Current preview: v0.17.3
+If the owner enables learning, the agent gets more useful over time from reviewable, confirmed
+preferences. Learning is off by default, can be revoked and deleted, and never grants additional
+permissions. See [the owner learning contract](docs/OWNER_LEARNING.md).
+
+It is not a general-purpose shell or browser agent. Models produce typed proposals and the local
+gateway decides whether an action is read-only, may be executed under the configured autonomy policy,
+requires human approval, or is denied. The product direction and delivery sequence are documented in
+[`docs/PRODUCT_DIRECTION.md`](docs/PRODUCT_DIRECTION.md).
+
+Release changes are listed in [`CHANGELOG.md`](CHANGELOG.md).
+
+## Current preview: v0.18.0
 
 - Local FastAPI gateway on port `8765`
 - Separate public-identity registry service on port `8770`
@@ -59,7 +69,7 @@ Mailbox passwords and OAuth refresh tokens are encrypted at rest and are not wri
 the mail database, the Calendar approval database, or model-visible memory. See
 [`docs/SECURITY.md`](docs/SECURITY.md) for the detailed boundaries.
 
-## Google Calendar in 0.17.3
+## Google Calendar in 0.18.0
 
 A user with a connected Google mailbox can choose **Google Kalender verbinden**. MAIL-AGENT performs an
 incremental OAuth grant and requests the Calendar permissions it actually needs:
@@ -135,7 +145,7 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e '.[dev]'
 
 uvicorn mail_agent_registry.main:app --app-dir apps/registry --port 8770 --reload
-uvicorn mail_agent_gateway.main_v173:app --app-dir apps/gateway --port 8765 --reload
+uvicorn mail_agent_gateway.main_v180:app --app-dir apps/gateway --port 8765 --reload
 ```
 
 Open `http://127.0.0.1:8765`. The UI has no Node/npm runtime dependency.
@@ -194,7 +204,7 @@ docs/
   INSTALLATION.md
 ```
 
-## 0.17.3 API highlights
+## 0.18.0 API highlights
 
 - `POST /v1/oauth/google/calendar/start` — incremental Google Calendar OAuth
 - `GET /v1/calendar/status` — Calendar capabilities and active autonomy policy without credentials
@@ -208,6 +218,8 @@ docs/
 - `GET /v1/calendar/approvals` — separate Calendar approval queue for work that still needs a human decision
 - `POST /v1/calendar/approvals/{id}/approve` / `reject` — human Calendar decision boundary
 - `POST /v1/drafts/{id}/discard` — audit-preserving owner discard; rejects a linked pending approval atomically
+- `GET /v1/briefing` — deterministic daily operations briefing across mail, drafts, follow-ups and Calendar
+- `POST /v1/onboarding/reset` — restart guided setup while preserving identity, connections and operational history
 
 ## Desktop experience
 

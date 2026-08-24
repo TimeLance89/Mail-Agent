@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 import threading
 from collections import Counter, deque
 from dataclasses import dataclass
@@ -83,6 +84,7 @@ class AgentBrain:
         self.journal_path = root / "journal.jsonl"
         self.feedback_path = root / "owner-feedback.jsonl"
         self.learning_decisions_path = root / "learning-decisions.json"
+        self.learning_enabled = lambda: True
         self._lock = threading.RLock()
 
     def ensure(self, identity: AgentIdentity, profile: AgentProfile) -> None:
@@ -224,12 +226,14 @@ class AgentBrain:
         before_body: str,
         after_subject: str,
         after_body: str,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | None:
         """Record privacy-minimized owner feedback from a draft correction.
 
         Full before/after mail text is intentionally not persisted. Only deterministic style signals
         derived from the owner's edit are stored locally.
         """
+        if not self.learning_enabled():
+            return None
         before = before_body.strip()
         after = after_body.strip()
         before_len = len(before)
@@ -281,6 +285,8 @@ class AgentBrain:
         return event
 
     def learning_candidates(self) -> list[dict[str, Any]]:
+        if not self.learning_enabled():
+            return []
         with self._lock:
             events = self._read_jsonl_recent(self.feedback_path, 80)
             decisions = self._read_learning_decisions()
@@ -378,6 +384,32 @@ class AgentBrain:
                 },
             )
         return candidate
+
+    def reset_owner_learning(self) -> dict[str, Any]:
+        """Remove observed correction signals and preferences learned from them.
+
+        Owner-authored memory outside the dedicated learned section is preserved. The journal keeps
+        one auditable reset receipt but never contains the removed mail or draft content.
+        """
+
+        with self._lock:
+            self.root.mkdir(parents=True, exist_ok=True)
+            self.feedback_path.write_text("", encoding="utf-8")
+            self.learning_decisions_path.write_text("{}\n", encoding="utf-8")
+            if self.memory_path.exists():
+                memory = self.memory_path.read_text(encoding="utf-8")
+                memory = re.sub(
+                    r"\n*## Learned from owner corrections\n.*?(?=\n## |\Z)",
+                    "",
+                    memory,
+                    flags=re.DOTALL,
+                ).rstrip()
+                self.memory_path.write_text(memory + "\n", encoding="utf-8")
+            self._append_jsonl(
+                self.journal_path,
+                {"kind": "owner_learning_reset", "at": _utc_now()},
+            )
+        return self.public_status()
 
     def reject_learning(self, candidate_id: str) -> dict[str, Any]:
         candidates = {item["candidate_id"]: item for item in self.learning_candidates()}

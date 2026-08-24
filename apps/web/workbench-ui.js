@@ -8,8 +8,11 @@
     attention: [],
     conversations: [],
     patterns: [],
+    briefing: null,
+    briefingLoadedAt: 0,
     selectedWaiting: 0,
     conversationLoading: false,
+    briefingLoading: false,
     settingsSection: 'agent',
     attentionLoading: false,
     inboxFilter: 'all',
@@ -68,7 +71,7 @@
         ${railButton('system','shield','System')}
       </aside>
       <aside class="wb-context">
-        <div class="wb-brand"><div><span class="wb-brand-title">MAIL-AGENT</span><span class="wb-brand-sub">${esc(agentName)} · lokaler Arbeitsbereich</span></div><span class="wb-build">0.15.0</span></div>
+        <div class="wb-brand"><div><span class="wb-brand-title">MAIL-AGENT</span><span class="wb-brand-sub">${esc(agentName)} · persönlicher Operations Agent</span></div><span class="wb-build">0.18.0</span></div>
         <div class="wb-nav-group"><div class="wb-nav-caption">Arbeit</div>
           ${navLink('overview','Briefing','home')}
           ${navLink('inbox','Eingang','inbox',dashboard.messages.length||'')}
@@ -100,20 +103,25 @@
   };
 
   function renderBriefing() {
-    const messages = dashboard.messages || [];
-    const attention = wb.attention.length ? wb.attention : messages.filter(m => m.needs_reply === true || ['urgent','high'].includes(String(m.agent_priority||'').toLowerCase()));
-    const first = attention.slice(0,5);
-    const traces = brainStatus?.activity || brainStatus?.recent_activity || [];
+    const briefing = wb.briefing || {};
+    const counts = briefing.counts || {};
+    const focus = briefing.focus || [];
+    const schedule = briefing.schedule || [];
+    const drafts = briefing.ready_drafts || [];
+    const learning = briefing.learning || {};
     const mailbox = dashboard.mailboxes[0];
     const behavior = runtimeSettings?.behavior || {};
-    const processed = Math.max(0, Number(brainStatus?.activity_summary?.trace_count || 0));
+    const kindLabel = value => ({decision:'Entscheidung',security:'Sicherheit',approval:'Freigabe',recovery:'Prüfen',follow_up:'Antwort',calendar_approval:'Termin'})[value] || 'Aufgabe';
+    const kindClass = value => ['security','recovery'].includes(value) ? 'red' : value === 'calendar_approval' ? 'green' : 'warm';
+    const eventStart = event => event?.start?.dateTime || event?.start?.date || '';
     return `<div class="wb-briefing">
-      <div class="wb-section-head"><div><h2>Was heute zählt.</h2><p>Kein Dashboard zum Anschauen – eine Arbeitsliste zum Entscheiden.</p></div><div class="wb-section-meta"><span>${esc(mailbox?.email_address||'Kein Postfach')}</span><span>·</span><span>${behavior.execution_mode==='shadow'?'Shadow Mode':'Live Mode'}</span></div></div>
-      <section class="wb-briefing-top"><div class="wb-briefing-copy"><h2>${attention.length?`${attention.length} Dinge brauchen deine Aufmerksamkeit.`:'Du musst gerade nichts entscheiden.'}</h2><p>MAIL-AGENT bündelt Rückfragen, Freigaben und wichtige Mails. Routinearbeit bleibt im Hintergrund; sensible Aktionen bleiben sichtbar und kontrolliert.</p></div><div class="wb-briefing-score"><small>Lokale Aktivität</small><strong>${processed||messages.length}</strong><span>${processed?'protokollierte Agentenläufe':'lokal synchronisierte Nachrichten'}</span></div></section>
-      <div class="wb-kpis"><div class="wb-kpi"><small>Eingang</small><strong>${messages.length}</strong><span>lokal verfügbar</span></div><div class="wb-kpi"><small>Wartet auf dich</small><strong>${attention.length}</strong><span>Rückfrage oder Priorität</span></div><div class="wb-kpi"><small>Freigaben</small><strong>${dashboard.approvals.length}</strong><span>Outbound / High-Risk</span></div><div class="wb-kpi"><small>Wartet auf andere</small><strong>${(wb.conversations||[]).filter(x=>x.status==='awaiting_reply').length}</strong><span>laufende Follow-ups</span></div></div>
-      <div class="wb-briefing-grid"><section class="wb-surface"><div class="wb-surface-head"><div><strong>Wartet auf dich</strong><small>Nach Relevanz, nicht nach Eingangszeit</small></div><button class="wb-btn ghost" data-view="attention">Öffnen</button></div>${first.length?first.map((item,i)=>`<div class="wb-focus-row" data-view="attention"><span class="wb-focus-bar ${esc(item.agent_priority||'normal')}"></span><div class="wb-focus-copy"><b>${esc(item.subject||'(ohne Betreff)')}</b><p>${esc(item.agent_summary||item.sender||'')}</p></div><div class="wb-focus-meta"><span class="wb-tag ${tagClass(item.agent_priority)}">${esc(labelPriority(item.agent_priority))}</span>${item.needs_reply===true?'<span class="wb-tag">Antwort</span>':''}</div></div>`).join(''):'<div class="wb-empty"><div><b>Keine Rückfragen</b>Der Agent kann weiterarbeiten.</div></div>'}</section>
-      <div class="wb-stack"><section class="wb-surface"><div class="wb-surface-head"><div><strong>Systemlage</strong><small>Nur Zustände, die für Arbeit relevant sind</small></div><span class="wb-tag green">bereit</span></div><div class="wb-status-table"><div class="wb-status-row"><span>Mailbox</span><strong>${dashboard.mailboxes.length?'verbunden':'fehlt'}</strong></div><div class="wb-status-row"><span>Ausführungsmodus</span><strong>${behavior.execution_mode==='shadow'?'Shadow':'Live'}</strong></div><div class="wb-status-row"><span>LLM</span><strong>${esc(runtimeSettings?.provider||form.provider||'—')} · ${esc(runtimeSettings?.model||form.model||'default')}</strong></div><div class="wb-status-row"><span>Agent-ID</span><strong>${identity||runtimeSettings?.identity?'signiert':'—'}</strong></div></div></section>
-      <section class="wb-surface"><div class="wb-surface-head"><div><strong>Letzte Aktivität</strong><small>Lesbar statt technisch</small></div><button class="wb-btn ghost" data-view="activity">Journal</button></div>${traces.length?traces.slice(0,5).map(t=>`<div class="wb-activity-row"><time>${fmtTime(t.started_at||t.at)}</time><span>${esc(t.subject||t.event||t.reason||'Agentenaktivität')}</span></div>`).join(''):'<div class="wb-empty"><div><b>Noch keine Aktivität</b>Neue Läufe erscheinen hier.</div></div>'}</section></div></div>
+      <div class="wb-section-head"><div><h2>Dein Tag ist vorbereitet.</h2><p>MAIL-AGENT zeigt Ergebnisse und Entscheidungen – nicht einfach nur neue E-Mails.</p></div><div class="wb-section-meta"><span>${esc(mailbox?.email_address||'Kein Postfach')}</span><span>·</span><span>${behavior.execution_mode==='shadow'?'Shadow Mode':runtimeSettings?.profile?.autonomy_mode==='autonomous'?'Autonom innerhalb deiner Regeln':'Assistiert innerhalb deiner Regeln'}</span></div></div>
+      <section class="wb-briefing-top"><div class="wb-briefing-copy"><h2>${esc(briefing.headline||'Briefing wird vorbereitet …')}</h2><p>${esc(briefing.subheadline||'Postfach, Zusagen, Termine und Wiedervorlagen werden zusammengeführt.')}</p></div><div class="wb-briefing-score"><small>Deine Entscheidungen</small><strong>${esc(counts.decisions||0)}</strong><span>${counts.overdue?`${esc(counts.overdue)} davon überfällig`:'nach Wichtigkeit sortiert'}</span></div></section>
+      <div class="wb-kpis"><div class="wb-kpi"><small>Jetzt entscheiden</small><strong>${esc(counts.decisions||0)}</strong><span>Agent hat vorgearbeitet</span></div><div class="wb-kpi"><small>Antworten bereit</small><strong>${esc(counts.ready_drafts||0)}</strong><span>prüfen statt neu schreiben</span></div><div class="wb-kpi"><small>Termine heute</small><strong>${esc(counts.today_events||0)}</strong><span>aus deinem Kalender</span></div><div class="wb-kpi"><small>Wartet auf andere</small><strong>${esc(counts.waiting_on_others||0)}</strong><span>automatisch nachverfolgt</span></div></div>
+      <div class="wb-briefing-grid"><section class="wb-surface"><div class="wb-surface-head"><div><strong>Deine nächsten Entscheidungen</strong><small>Mail, Freigaben und Termine in einer Reihenfolge</small></div><span class="wb-tag ${counts.decisions?'warm':'green'}">${counts.decisions?'Handlungsbereit':'Alles erledigt'}</span></div>${focus.length?focus.map(item=>`<button class="wb-focus-row wb-briefing-action" data-briefing-view="${esc(item.action?.view||'attention')}"><span class="wb-focus-bar ${item.score>=95?'urgent':item.score>=85?'high':'normal'}"></span><div class="wb-focus-copy"><b>${esc(item.title||'Ohne Betreff')}</b><p>${esc(item.summary||'')}</p></div><div class="wb-focus-meta"><span class="wb-tag ${kindClass(item.kind)}">${esc(kindLabel(item.kind))}</span><span class="wb-tag">${esc(item.action?.label||'Öffnen')}</span></div></button>`).join(''):'<div class="wb-empty"><div><b>Du bist fertig</b>Der Agent arbeitet im Hintergrund weiter und meldet sich nur, wenn eine echte Entscheidung nötig ist.</div></div>'}</section>
+      <div class="wb-stack"><section class="wb-surface"><div class="wb-surface-head"><div><strong>Heute im Kalender</strong><small>${briefing.calendar?.available?'read-only geprüft':'optional verbinden'}</small></div><button class="wb-btn ghost" data-view="calendar">Kalender</button></div>${schedule.length?schedule.slice(0,5).map(event=>`<div class="wb-activity-row"><time>${esc(fmtTime(eventStart(event)))}</time><span>${esc(event.summary||'Termin')}</span></div>`).join(''):`<div class="wb-empty compact"><div><b>${briefing.calendar?.error==='not_connected'?'Kalender nicht verbunden':'Keine weiteren Termine'}</b>${briefing.calendar?.error==='not_connected'?'Optional verbinden, damit Zusagen und Tagesplanung zusammenspielen.':'Der restliche Tag ist frei.'}</div></div>`}</section>
+      <section class="wb-surface"><div class="wb-surface-head"><div><strong>Vorbereitete Antworten</strong><small>fertige Arbeit statt Posteingang</small></div><button class="wb-btn ghost" data-view="drafts">Alle Entwürfe</button></div>${drafts.length?drafts.slice(0,4).map(item=>`<button class="wb-activity-row wb-briefing-action" data-briefing-view="drafts"><time>${esc(fmtDate(item.created_at))}</time><span>${esc(item.title||'Antwortentwurf')}</span></button>`).join(''):'<div class="wb-empty compact"><div><b>Keine Entwürfe offen</b>Neue Antworten erscheinen nach der Analyse automatisch hier.</div></div>'}</section>
+      <section class="wb-surface"><div class="wb-surface-head"><div><strong>So gut kennt dich dein Agent</strong><small>${learning.enabled?'nur aus bestätigtem Lernen':'Lernen ist ausgeschaltet'}</small></div><span class="wb-tag ${learning.enabled?'green':''}">${learning.enabled?'Von dir erlaubt':'Aus'}</span></div><div class="wb-empty compact"><div><b>${learning.enabled?`${esc(learning.confirmed_preferences||0)} bestätigte Präferenzen`:'Du entscheidest, ob gelernt wird'}</b>${learning.enabled?(learning.pending_suggestions?`${esc(learning.pending_suggestions)} neue Lernvorschläge warten auf deine Prüfung.`:'Neue Muster werden erst nach deiner Bestätigung dauerhaft genutzt.'):'Ohne Zustimmung beobachtet MAIL-AGENT weder gesendete Mails noch deine Entwurfskorrekturen.'}</div></div><div class="wb-surface-head"><small>Mehr Selbstständigkeit entsteht nur innerhalb deiner Regeln.</small><button class="wb-btn ghost" data-view="settings">Lernen steuern</button></div></section></div></div>
     </div>`;
   }
 
@@ -131,6 +139,14 @@
     try { const result = await get('/v1/attention?limit=200'); wb.attention = result.attention || []; }
     catch (error) { if (!silent) showNotice(error.message,'error'); }
     finally { wb.attentionLoading = false; }
+  }
+
+  async function loadDailyBriefing(silent=true, force=false) {
+    if (wb.briefingLoading || (!force && wb.briefing && Date.now()-wb.briefingLoadedAt<60000)) return;
+    wb.briefingLoading = true;
+    try { wb.briefing = await get('/v1/briefing?limit=20'); wb.briefingLoadedAt=Date.now(); }
+    catch (error) { if (!silent) showNotice(error.message,'error'); }
+    finally { wb.briefingLoading = false; }
   }
 
 
@@ -207,7 +223,7 @@
       panel = `<div class="wb-settings-title"><h2>Regeln</h2><p>Absender und Domains deterministisch steuern. Diese Regeln werden nach der Modellanalyse im Gateway erzwungen.</p></div><div class="wb-setting-section"><div class="wb-settings-actions top"><button class="wb-btn" id="settings-add-rule">Regel hinzufügen</button><button class="wb-btn primary" id="wb-save-rules">Regeln speichern</button></div><div class="rule-editor wb-rule-editor">${rules.length?rules.map(ruleRow).join(''):'<div class="wb-empty compact"><div><b>Noch keine speziellen Regeln</b>Neue Regeln können Absender oder ganze Domains deterministisch behandeln.</div></div>'}</div></div>`;
     }
     if (wb.settingsSection === 'software') {
-      const current = updateStatus?.current_version || '0.15.0';
+      const current = updateStatus?.current_version || '0.18.0';
       const available = !!updateStatus?.available;
       panel = `<div class="wb-settings-title"><h2>Software</h2><p>Update-Kanal, installierte Version und verifizierter In-Place-Updater.</p></div><div class="wb-setting-section"><div class="wb-setting-row"><div class="wb-setting-label"><b>Installierte Version</b></div><div class="wb-control"><span class="wb-tag">v${esc(current)}</span></div></div><div class="wb-setting-row"><div class="wb-setting-label"><b>Update-Kanal</b><p>Installer wird per SHA-256 und Release-Digest geprüft.</p></div><div class="wb-control">${esc(updateStatus?.channel||'Preview')}</div></div><div class="wb-settings-actions"><button class="wb-btn" id="check-update">Jetzt nach Updates suchen</button>${available?'<button class="wb-btn primary" id="install-update">Update installieren</button>':''}</div>${updateStatus?.error?`<div class="wb-side-note"><strong>Update-Kanal nicht erreichbar</strong>${esc(updateStatus.error)}</div>`:''}</div>`;
       if (!updateStatus && !updateLoading) setTimeout(()=>checkUpdate(true),0);
@@ -252,6 +268,7 @@
         if (section) wb.settingsSection = section;
         activeView = view;
         history.replaceState({}, '', view === 'overview' ? '/' : `/?view=${encodeURIComponent(view)}`);
+        if (view === 'overview') await loadDailyBriefing(true);
         if (view === 'attention') await loadAttention(true);
         if (['overview','waiting','automation'].includes(view)) await loadConversationIntelligence(true);
         if (['settings','automation','activity','shadow','system'].includes(view)) await Promise.all([
@@ -318,6 +335,12 @@
     document.getElementById('wb-run-agent')?.addEventListener('click', runAgentNow);
     document.getElementById('wb-run-agent-context')?.addEventListener('click', runAgentNow);
     document.getElementById('wb-command-search')?.addEventListener('click', openCommand);
+    document.querySelectorAll('[data-briefing-view]').forEach(el=>el.addEventListener('click',async()=>{
+      activeView=el.dataset.briefingView||'overview';
+      if(activeView==='attention')await loadAttention(true);
+      if(activeView==='waiting')await loadConversationIntelligence(true);
+      render();
+    }));
     document.querySelectorAll('[data-inbox-filter]').forEach(el=>el.addEventListener('click',()=>{wb.inboxFilter=el.dataset.inboxFilter;wb.selectedMessage=0;render();}));
     document.querySelectorAll('[data-attention-filter]').forEach(el=>el.addEventListener('click',()=>{wb.attentionFilter=el.dataset.attentionFilter;wb.selectedAttention=0;render();}));
     document.querySelectorAll('[data-mail-select]').forEach(el => el.addEventListener('click',()=>{wb.selectedMessage=Number(el.dataset.mailSelect);render();}));
@@ -362,8 +385,9 @@
   }
 
   // The original enhancement is deliberately replaced; attention is now a first-class work area.
+  wb.refreshBriefing = loadDailyBriefing;
   window.__mailAgentWorkbench = wb;
 
   // Real installed systems load attention quietly; fresh setup remains untouched.
-  setTimeout(async()=>{ if (installed) { await Promise.all([loadAttention(true),loadConversationIntelligence(true)]); render(); } }, 450);
+  setTimeout(async()=>{ if (installed) { await Promise.all([loadDailyBriefing(true),loadAttention(true),loadConversationIntelligence(true)]); render(); } }, 450);
 })();

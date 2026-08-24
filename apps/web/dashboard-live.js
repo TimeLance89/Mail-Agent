@@ -194,6 +194,9 @@
         loadBrainStatus(true),
         loadSystemHealth(true),
       ];
+      if (window.__mailAgentWorkbench?.refreshBriefing) {
+        tasks.push(window.__mailAgentWorkbench.refreshBriefing(true));
+      }
       if (activeView === 'shadow' || runtimeSettings?.behavior?.execution_mode === 'shadow') {
         tasks.push(loadShadowStatus(true));
       }

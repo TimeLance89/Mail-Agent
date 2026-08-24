@@ -11,14 +11,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_workbench_is_first_class_and_adaptive_assets_are_loaded():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
-    assert "/assets/workbench.css?v=0.17.3" in index
-    assert "/assets/workbench-ui.js?v=0.17.3" in index
-    assert "/assets/adaptive-intelligence.css?v=0.17.3" in index
-    assert "/assets/adaptive-intelligence-ui.js?v=0.17.3" in index
-    assert "/assets/calendar-ui.js?v=0.17.3" in index
-    assert "/assets/dashboard-live.js?v=0.17.3" in index
-    assert "/assets/v171-ux.js?v=0.17.3" in index
-    assert "/assets/v172-ux.js?v=0.17.3" in index
+    assert "/assets/workbench.css?v=0.18.0" in index
+    assert "/assets/workbench-ui.js?v=0.18.0" in index
+    assert "/assets/adaptive-intelligence.css?v=0.18.0" in index
+    assert "/assets/adaptive-intelligence-ui.js?v=0.18.0" in index
+    assert "/assets/calendar-ui.js?v=0.18.0" in index
+    assert "/assets/dashboard-live.js?v=0.18.0" in index
+    assert "/assets/v171-ux.js?v=0.18.0" in index
+    assert "/assets/v172-ux.js?v=0.18.0" in index
     assert "/assets/attention-center.js" not in index
 
 
@@ -34,6 +34,7 @@ def test_workbench_preserves_direct_actions_and_inherits_existing_dashboard_bind
         "data-draft-edit",
         "data-draft-submit",
         "/v1/attention?limit=200",
+        "/v1/briefing?limit=20",
         "/v1/attention/resolve",
         "/v1/settings/behavior",
         "mark_processed_read",

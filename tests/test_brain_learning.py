@@ -78,6 +78,27 @@ def test_repeated_owner_edits_create_candidate_but_do_not_learn_automatically(tm
     assert brain.public_status()["feedback_events"] == 3
 
 
+def test_owner_edits_are_not_observed_when_learning_is_disabled(tmp_path):
+    _manager, _identity, _profile, brain = _identity_profile_brain(tmp_path)
+    before, after = _shortening_bodies()
+    brain.learning_enabled = lambda: False
+
+    result = brain.record_owner_edit(
+        draft_id="dr-off",
+        mailbox_id="mb",
+        message_id="msg-off",
+        sender="person@example.test",
+        before_subject="Re: Frage",
+        before_body=before,
+        after_subject="Re: Frage",
+        after_body=after,
+    )
+
+    assert result is None
+    assert brain.public_status()["feedback_events"] == 0
+    assert brain.learning_candidates() == []
+
+
 def test_learning_is_written_only_after_explicit_acceptance(tmp_path):
     _manager, _identity, _profile, brain = _identity_profile_brain(tmp_path)
     before, after = _shortening_bodies()
@@ -119,6 +140,31 @@ def test_rejected_learning_does_not_modify_memory(tmp_path):
     brain.reject_learning("prefer-shorter-replies")
     assert brain.snapshot().memory == initial
     assert brain.learning_candidates() == []
+
+
+def test_learning_reset_removes_signals_and_machine_learned_memory(tmp_path):
+    _manager, _identity, _profile, brain = _identity_profile_brain(tmp_path)
+    before, after = _shortening_bodies()
+    for index in range(3):
+        brain.record_owner_edit(
+            draft_id=f"dr-{index}",
+            mailbox_id="mb",
+            message_id=f"msg-{index}",
+            sender=None,
+            before_subject="Betreff",
+            before_body=before,
+            after_subject="Betreff",
+            after_body=after,
+        )
+    brain.accept_learning("prefer-shorter-replies")
+
+    result = brain.reset_owner_learning()
+
+    assert result["feedback_events"] == 0
+    assert brain.learning_candidates() == []
+    assert "Learned from owner corrections" not in brain.snapshot().memory
+    assert "Owner-controlled long-term memory" in brain.snapshot().memory
+    assert brain.recent_activity(1)[0]["kind"] == "owner_learning_reset"
 
 
 def test_draft_service_records_owner_feedback_without_storing_full_mail_text(tmp_path):

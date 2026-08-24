@@ -1,4 +1,4 @@
-/* MAIL-AGENT 0.16.1 · Owner Intelligence & Efficiency. No DOM MutationObserver by design. */
+/* MAIL-AGENT Owner Intelligence & Efficiency. No DOM MutationObserver by design. */
 (() => {
   const state = { status:null, usage:null, loading:false, lastUsageAt:0 };
   const roles = [
@@ -37,15 +37,15 @@
     const status=profile?.status||'not_asked';
     let content='';
     if (!profile?.consent) {
-      content=`<div class="ai16-note">Historische E-Mails werden nur nach deiner ausdrücklichen Zustimmung analysiert. Rohinhalte werden nicht im Owner-Profil gespeichert; gelernte Punkte landen nicht automatisch in MEMORY.md und können Policy, Approval, Security oder Agent-ID niemals ändern.</div><div class="ai16-actions" style="margin-top:14px"><button class="ai16-btn primary" id="ai16-consent-yes">Analyse erlauben</button><button class="ai16-btn" id="ai16-consent-no">Nicht verwenden</button></div>`;
+      content=`<div class="ai16-note">Lernen ist aus. Historische E-Mails und deine Entwurfskorrekturen werden nicht als Lernsignale ausgewertet. Wenn du es erlaubst, entstehen zunächst nur Vorschläge: Erst deine Bestätigung macht eine Präferenz dauerhaft. Policy, Freigaben, Sicherheit und Agent-ID sind grundsätzlich unlernbar.</div><div class="ai16-actions" style="margin-top:14px"><button class="ai16-btn primary" id="ai16-consent-yes">Lernen als Vorschläge erlauben</button><button class="ai16-btn" id="ai16-consent-no">Ausgeschaltet lassen</button></div>`;
     } else if (status==='preview_ready') {
       content=`<div class="ai16-note">Vorschau aus ${fmt(profile.sample_count)} eigenen gesendeten Nachrichten. Jeder Punkt bleibt bis zur Bestätigung inaktiv.</div><div id="ai16-candidates">${preview.length?preview.map((item,i)=>`<label class="ai16-choice"><input type="checkbox" data-owner-enable="${i}" ${item.enabled!==false?'checked':''}><span><input type="text" data-owner-value="${i}" value="${esc16(item.value)}"><small>${esc16(item.rationale||'Abstrahiertes, wiederkehrendes Muster')} · Konfidenz ${pct((item.confidence||0)*100)} · ${fmt(item.evidence_count)} Belege</small><div class="ai16-source">${(item.source_refs||[]).map(esc16).join(' · ')}</div></span></label>`).join(''):'<div class="ai16-empty">Keine ausreichend stabilen Merkmale gefunden.</div>'}</div><div class="ai16-actions" style="margin-top:14px"><button class="ai16-btn primary" id="ai16-profile-activate" ${preview.length?'':'disabled'}>Auswahl aktivieren</button><button class="ai16-btn" id="ai16-profile-relearn">Neu analysieren</button><button class="ai16-btn danger" id="ai16-profile-delete">Profil verwerfen</button></div>`;
     } else if (status==='active') {
-      content=`<div class="ai16-note">Aktiviertes, vom Besitzer bestätigtes Profil · Version ${fmt(profile.profile_version)}. Es ist ausschließlich beratender Kontext.</div>${active.map(item=>`<div class="ai16-row"><b>${esc16(item.key)}</b><code>${esc16(item.value)}</code><span class="ai16-badge good">bestätigt</span></div>`).join('')||'<div class="ai16-empty">Keine aktiven Punkte.</div>'}<div class="ai16-actions" style="margin-top:14px"><button class="ai16-btn" id="ai16-profile-relearn">Neu lernen</button><button class="ai16-btn danger" id="ai16-profile-delete">Profil löschen</button></div>`;
+      content=`<div class="ai16-note">Von dir bestätigtes Profil · Version ${fmt(profile.profile_version)}. Es hilft dem Agenten beim Vorbereiten von Arbeit, erweitert aber niemals seine Berechtigungen.</div>${active.map(item=>`<div class="ai16-row"><b>${esc16(item.key)}</b><code>${esc16(item.value)}</code><span class="ai16-badge good">bestätigt</span></div>`).join('')||'<div class="ai16-empty">Keine aktiven Punkte.</div>'}<div class="ai16-actions" style="margin-top:14px"><button class="ai16-btn" id="ai16-profile-relearn">Neue Vorschläge suchen</button><button class="ai16-btn danger" id="ai16-profile-delete">Lernen widerrufen & löschen</button></div>`;
     } else {
       content=`<div class="ai16-note">Zustimmung ist aktiv. MAIL-AGENT analysiert erst dann historische eigene Nachrichten, wenn du die Vorschau ausdrücklich startest.</div><div class="ai16-actions" style="margin-top:14px"><button class="ai16-btn primary" id="ai16-profile-preview">Vorschau erstellen</button><button class="ai16-btn danger" id="ai16-profile-delete">Zustimmung & Profil zurücksetzen</button></div>`;
     }
-    return `<section class="ai16-surface"><div class="ai16-head"><div><h3>Lerne mich kennen</h3><p>Optionales Owner-Profil aus einer begrenzten Auswahl eigener gesendeter E-Mails. Preview und Bestätigung sind zwingend.</p></div><span class="ai16-badge ${status==='active'?'good':''}">${esc16(status)}</span></div><div class="ai16-body">${content}</div></section>`;
+    return `<section class="ai16-surface"><div class="ai16-head"><div><h3>Wie gut darf dein Agent dich kennenlernen?</h3><p>Du steuerst das Lernen. Beobachtung ist optional, Vorschläge sind prüfbar und dauerhafte Präferenzen brauchen deine Bestätigung.</p></div><span class="ai16-badge ${status==='active'?'good':''}">${profile?.consent?'Von dir erlaubt':'Aus'}</span></div><div class="ai16-body">${content}</div></section>`;
   }
 
   function routingHtml(status) {
@@ -70,12 +70,11 @@
 
   function onboardingBanner(profile) {
     if (!profile || profile.asked) return '';
-    return `<div class="ai16-banner" id="ai16-owner-banner"><div><strong>Möchtest du, dass MAIL-AGENT deinen Stil kennenlernt?</strong><p>Optional: begrenzte Analyse eigener gesendeter E-Mails → Vorschau → du bestätigst oder änderst jeden Lernpunkt.</p></div><div class="ai16-actions"><button class="ai16-btn primary" id="ai16-banner-yes">Ja, Vorschau vorbereiten</button><button class="ai16-btn" id="ai16-banner-no">Nein</button></div></div>`;
+    return `<div class="ai16-banner" id="ai16-owner-banner"><div><strong>Darf MAIL-AGENT dich nach und nach kennenlernen?</strong><p>Optional und widerrufbar: Der Agent sammelt nur abstrakte Muster, schlägt Präferenzen vor und nutzt sie erst nach deiner Bestätigung.</p></div><div class="ai16-actions"><button class="ai16-btn primary" id="ai16-banner-yes">Lernvorschläge erlauben</button><button class="ai16-btn" id="ai16-banner-no">Nein, ausgeschaltet lassen</button></div></div>`;
   }
 
   function mount() {
     if (!installed || !state.status) return;
-    document.querySelectorAll('.wb-build').forEach(el=>el.textContent='0.16.1');
     const host=document.querySelector('.wb-content');
     if (!host) return;
     document.getElementById('ai16-mounted')?.remove();
@@ -114,7 +113,7 @@
   }
 
   function bind(root) {
-    root.querySelector('#ai16-consent-yes')?.addEventListener('click',async()=>{await post('/v1/owner-profile/consent',{enabled:true,actor:'local-user'});await reload(true);showNotice('Owner-Profil-Lernen ist freigegeben. Es wurde noch nichts gelernt.');});
+    root.querySelector('#ai16-consent-yes')?.addEventListener('click',async()=>{await post('/v1/owner-profile/consent',{enabled:true,actor:'local-user'});await reload(true);showNotice('Lernvorschläge sind erlaubt. Dauerhaft gelernt wird erst nach deiner Bestätigung.');});
     root.querySelector('#ai16-consent-no')?.addEventListener('click',async()=>{await post('/v1/owner-profile/consent',{enabled:false,actor:'local-user'});await reload(true);});
     root.querySelector('#ai16-banner-yes')?.addEventListener('click',async()=>{await post('/v1/owner-profile/consent',{enabled:true,actor:'local-user'});activeView='settings';await reload(true);render();});
     root.querySelector('#ai16-banner-no')?.addEventListener('click',async()=>{await post('/v1/owner-profile/consent',{enabled:false,actor:'local-user'});await reload(true);});
@@ -122,7 +121,7 @@
     root.querySelector('#ai16-profile-preview')?.addEventListener('click',preview);
     root.querySelector('#ai16-profile-relearn')?.addEventListener('click',preview);
     root.querySelector('#ai16-profile-activate')?.addEventListener('click',async()=>{try{await post('/v1/owner-profile/activate',{candidates:currentReview()});await reload(true);showNotice('Bestätigtes Owner-Profil aktiviert.');}catch(error){showNotice(error.message,'error');}});
-    root.querySelector('#ai16-profile-delete')?.addEventListener('click',async()=>{try{await request('/v1/owner-profile?actor=local-user',{method:'DELETE'});await reload(true);showNotice('Owner-Profil vollständig gelöscht.');}catch(error){showNotice(error.message,'error');}});
+    root.querySelector('#ai16-profile-delete')?.addEventListener('click',async()=>{try{await request('/v1/owner-profile?actor=local-user',{method:'DELETE'});await reload(true);showNotice('Lernen widerrufen; Profil, Lernsignale und gelernte Korrekturen wurden gelöscht.');}catch(error){showNotice(error.message,'error');}});
     root.querySelectorAll('[data-ai16-mode]').forEach(button=>button.addEventListener('click',()=>{const routing=state.status.model_routing||{};state.status.model_routing={...routing,mode:button.dataset.ai16Mode};mount();}));
     root.querySelector('#ai16-routing-save')?.addEventListener('click',async()=>{try{const mode=state.status?.model_routing?.mode||'automatic';await put('/v1/settings/model-routing',{routing:routingPayload(mode),actor:'local-user'});await reload(true);showNotice('Modellstrategie gespeichert.');}catch(error){showNotice(error.message,'error');}});
     root.querySelector('#ai16-usage-refresh')?.addEventListener('click',async()=>{await loadUsage(true);mount();});

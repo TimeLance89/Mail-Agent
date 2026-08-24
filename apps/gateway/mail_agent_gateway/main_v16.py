@@ -37,6 +37,9 @@ base.app.version = APP_VERSION
 
 signal_store = ReleaseEfficiencySignalStore(base.settings.data_dir / "adaptive-intelligence.db")
 owner_profile_store = ReleaseOwnerProfileStore(base.settings.data_dir / "owner-profile.json")
+base.agent_runtime.brain.learning_enabled = lambda: bool(
+    owner_profile_store.public().get("consent")
+)
 model_router = ReleaseModelRouter(base.state_store, base.providers)
 adaptive_mail_agent = ReleaseAdaptiveMailAgent(
     policy_engine=base.policy_engine,
@@ -180,6 +183,8 @@ async def owner_profile_status() -> dict[str, Any]:
 @base.app.post("/v1/owner-profile/consent")
 async def owner_profile_consent(request: OwnerProfileConsentRequest) -> dict[str, Any]:
     result = owner_profile_store.set_consent(request.enabled)
+    if not request.enabled:
+        base.agent_runtime.brain.reset_owner_learning()
     base.audit_log.append(
         "owner_profile_consent_changed",
         actor=request.actor,
@@ -221,6 +226,7 @@ async def owner_profile_activate(request: OwnerProfileReview) -> dict[str, Any]:
 @base.app.delete("/v1/owner-profile")
 async def owner_profile_delete(actor: str = "local-user") -> dict[str, Any]:
     result = owner_profile_store.reset()
+    base.agent_runtime.brain.reset_owner_learning()
     base.audit_log.append("owner_profile_deleted", actor=actor, details={})
     return result
 

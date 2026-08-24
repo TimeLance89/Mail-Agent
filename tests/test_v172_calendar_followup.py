@@ -142,21 +142,21 @@ async def test_calendar_acceptance_followup_is_idempotent(tmp_path: Path):
     assert count == 1
 
 
-def test_v172_workbench_contract_remains_exposed_in_0173_bundle():
+def test_v172_workbench_contract_remains_exposed_in_0180_bundle():
     root = Path(__file__).resolve().parents[1]
     index = (root / "apps/web/index.html").read_text(encoding="utf-8")
     ux = (root / "apps/web/v172-ux.js").read_text(encoding="utf-8")
     entry = (root / "apps/launcher/mail_agent_launcher_entry.py").read_text(encoding="utf-8")
     gateway = (root / "apps/gateway/mail_agent_gateway/main_v172.py").read_text(encoding="utf-8")
 
-    assert "/assets/v172-ux.js?v=0.17.3" in index
+    assert "/assets/v172-ux.js?v=0.18.0" in index
     assert "data.draftDiscard" in ux or "draftDiscard" in ux
     assert "/discard" in ux
     assert "prepare-mail-reply" in ux
     assert "Freigeben & senden" in ux
     assert "fetch('/health'" in ux
     assert "MutationObserver" not in ux
-    assert "mail_agent_launcher.v173_entry" in entry
+    assert "mail_agent_launcher.v180_entry" in entry
     assert "_approve_with_confirmation_reply" in gateway
     assert "mail_followup_required" in gateway
     assert "writerwithoutprivateaccess" in gateway
