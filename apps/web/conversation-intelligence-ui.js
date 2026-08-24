@@ -1,6 +1,6 @@
 /* MAIL-AGENT Conversation Intelligence UI adapter. */
 (() => {
-  const VERSION = '0.17.3';
+  const VERSION = '0.18.0';
   let shownUndoToken = '';
   let pollTimer = null;
 

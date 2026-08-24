@@ -75,6 +75,7 @@ def build_daily_briefing(
     calendar_approvals: list[dict[str, Any]] | None = None,
     calendar_events: list[dict[str, Any]] | None = None,
     calendar_error: str | None = None,
+    learning: dict[str, Any] | None = None,
     now: datetime | None = None,
     limit: int = 20,
 ) -> dict[str, Any]:
@@ -284,5 +285,13 @@ def build_daily_briefing(
         "waiting_on_others": waiting[:10],
         "schedule": schedule[:20],
         "calendar": {"available": calendar_error is None, "error": calendar_error},
+        "learning": learning
+        or {
+            "enabled": False,
+            "status": "off",
+            "confirmed_preferences": 0,
+            "pending_suggestions": 0,
+            "profile_version": 0,
+        },
         "side_effects": False,
     }

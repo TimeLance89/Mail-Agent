@@ -125,6 +125,6 @@ def test_v173_release_contract_wires_autonomous_sync_and_draft_terminal_filter()
     assert "calendar_service.approve" in main
     assert "calendar_concierge.assist" in main
     assert "_TERMINAL_DRAFT_STATUSES = {\"discarded\", \"sent\"}" in lifecycle
-    assert "mail_agent_launcher.v173_entry" in launcher
-    assert 'version = "0.17.3"' in pyproject
-    assert 'mail_agent_launcher.v173_entry:main' in pyproject
+    assert "mail_agent_launcher.v180_entry" in launcher
+    assert 'version = "0.18.0"' in pyproject
+    assert 'mail_agent_launcher.v180_entry:main' in pyproject

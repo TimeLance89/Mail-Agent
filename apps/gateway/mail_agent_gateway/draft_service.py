@@ -92,7 +92,7 @@ class DraftService:
             before_subject.strip() != subject.strip() or before_body.strip() != clean_body.strip()
         ):
             self.brain.ensure(identity, profile)
-            self.brain.record_owner_edit(
+            feedback = self.brain.record_owner_edit(
                 draft_id=draft_id,
                 mailbox_id=proposal.mailbox_id,
                 message_id=proposal.message_id,
@@ -102,7 +102,7 @@ class DraftService:
                 after_subject=subject.strip(),
                 after_body=clean_body,
             )
-            feedback_recorded = True
+            feedback_recorded = feedback is not None
 
         self.audit_log.append(
             "draft_edited_and_resigned",

@@ -12,6 +12,10 @@ owner to manage another inbox. It continuously turns email and calendar state in
 
 The short promise is: **MAIL-AGENT prepares the day and asks only when a real decision is needed.**
 
+Its compounding value comes from an optional relationship: when the owner enables learning,
+MAIL-AGENT gradually turns confirmed preferences and outcomes into better prepared work. Learning
+and authority remain separate. The agent can know more without being allowed to do more.
+
 ## Core product loop
 
 ```text
@@ -20,7 +24,8 @@ Observe mail and calendar
         -> execute safe routine work within owner rules
         -> prepare replies, approvals and calendar actions
         -> brief the owner on the remaining decisions
-        -> learn only from explicit owner feedback
+        -> propose learning only after owner opt-in
+        -> remember only what the owner confirms
 ```
 
 This loop is the primary product. Inbox browsing, logs, rule editors and provider controls support it;
@@ -82,6 +87,18 @@ The repositioning does not relax the existing trust boundaries:
 - all autonomous actions remain locally auditable and recoverable where the provider supports it;
 - incoming mail is always untrusted data, never policy or owner instruction.
 
+## Owner learning contract
+
+- learning is off until the owner opts in;
+- no opt-in means no sent-mail profile analysis and no collection of draft-correction signals;
+- observed patterns become suggestions, never silent durable memory;
+- every durable preference is inspectable, scoped, editable and deletable;
+- revoking consent deletes the profile, learning signals and machine-learned correction memory;
+- learning can improve preparation but can never expand permissions or weaken safety boundaries.
+
+See [`OWNER_LEARNING.md`](OWNER_LEARNING.md) for the trust ladder, learnable domains and deletion
+semantics.
+
 ## Delivery sequence
 
 ### 0.18 — Outcome-first briefing
@@ -91,21 +108,28 @@ The repositioning does not relax the existing trust boundaries:
 - unified home screen for decisions, drafts, follow-ups and today's Calendar;
 - direct routing from each briefing item to the relevant work area.
 
-### 0.19 — Commitment ledger
+### 0.19 — Owner learning and delegation
+
+- one learning center for sent-mail patterns, corrections and outcome feedback;
+- scoped opt-in and clear maturity from proposed to confirmed to delegated;
+- receipts that explain which confirmed preference improved an outcome;
+- per-domain delegation without any policy or approval inheritance.
+
+### 0.20 — Commitment ledger
 
 - typed extraction of promises, requests, dates and deadlines;
 - durable commitment state independent of inbox presence;
 - owner confirmation for ambiguous obligations;
 - completion, snooze and source-thread provenance.
 
-### 0.20 — Outcome command
+### 0.21 — Outcome command
 
 - replace the search-only command box with trusted owner instructions;
 - support goals such as "prepare replies for everything urgent" or "find a time for this request";
 - produce an execution plan before high-impact work;
 - reuse the existing typed proposals, policies and approval queues.
 
-### 0.21 — Autopilot receipts
+### 0.22 — Autopilot receipts
 
 - configurable low-risk automation bundles for normal users;
 - concise "handled for you" receipts instead of technical journal noise;

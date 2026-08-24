@@ -20,6 +20,7 @@ base = previous.base
 calendar_service = previous.calendar_service
 calendar_store = previous.calendar_store
 calendar_concierge = previous.calendar_concierge
+owner_profile_store = previous.previous.previous.previous.owner_profile_store
 
 previous.APP_VERSION = APP_VERSION
 previous.previous.APP_VERSION = APP_VERSION
@@ -506,6 +507,16 @@ async def daily_briefing(mailbox_id: str | None = None, limit: int = 20) -> dict
         if not mailbox_id or item.get("mailbox_id") == mailbox_id
     ]
     calendar_events, calendar_error = await _today_calendar_events(mailbox_id)
+    owner_profile = owner_profile_store.public()
+    learning_enabled = bool(owner_profile.get("consent"))
+    pending_profile = (
+        len(owner_profile.get("preview") or [])
+        if owner_profile.get("status") == "preview_ready"
+        else 0
+    )
+    pending_corrections = (
+        len(base.agent_runtime.brain.learning_candidates()) if learning_enabled else 0
+    )
     return build_daily_briefing(
         attention=base.mail_store.list_attention(mailbox_id, 200),
         approvals=approvals,
@@ -514,6 +525,13 @@ async def daily_briefing(mailbox_id: str | None = None, limit: int = 20) -> dict
         calendar_approvals=calendar_approvals,
         calendar_events=calendar_events,
         calendar_error=calendar_error,
+        learning={
+            "enabled": learning_enabled,
+            "status": str(owner_profile.get("status") or "not_asked"),
+            "confirmed_preferences": len(owner_profile.get("active") or []),
+            "pending_suggestions": pending_profile + pending_corrections,
+            "profile_version": int(owner_profile.get("profile_version") or 0),
+        },
         limit=limit,
     )
 

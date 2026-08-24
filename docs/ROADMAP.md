@@ -12,11 +12,24 @@ The next roadmap is outcome-first:
 - [x] deterministic briefing model for mail, approvals, drafts, follow-ups and Calendar;
 - [x] `/v1/briefing` read-only aggregation endpoint;
 - [x] start page centered on decisions and prepared work;
+- [x] learning status and owner control visible in the briefing;
+- [x] draft-correction learning disabled until explicit owner consent;
+- [x] revocation deletes profile, signals and machine-learned correction memory;
+- [x] safe onboarding restart preserving identity, connections and operational history;
 - [ ] briefing completion actions without switching work areas;
 - [ ] automation receipts: what was handled since the last briefing;
 - [ ] benchmark briefing usefulness against real anonymized scenarios.
 
-## 0.19 — Commitments and deadlines
+## 0.19 — Owner learning and progressive delegation
+
+- [ ] unify profile, draft-correction and outcome learning in one control center;
+- [ ] scoped consent by communication, priorities, contacts and workflows;
+- [ ] evidence and benefit receipts for every confirmed preference;
+- [ ] editable preference scopes and expiry/reconfirmation;
+- [ ] per-domain delegation that never inherits from learning consent;
+- [ ] measure avoided corrections without storing mail content.
+
+## 0.20 — Commitments and deadlines
 
 - [ ] typed commitment/deadline proposal schema;
 - [ ] durable local commitment ledger with source provenance;
@@ -25,7 +38,7 @@ The next roadmap is outcome-first:
 - [ ] Calendar/task linkage without weakening approval policy;
 - [ ] missed-commitment and false-positive evaluations.
 
-## 0.20 — Owner command surface
+## 0.21 — Owner command surface
 
 - [ ] trusted natural-language owner command endpoint;
 - [ ] multi-item planning across mail and Calendar;
@@ -33,7 +46,7 @@ The next roadmap is outcome-first:
 - [ ] reuse existing typed mail/Calendar proposal executors;
 - [ ] outcome history instead of raw command transcripts.
 
-## 0.21 — Normal-user autopilot
+## 0.22 — Normal-user autopilot
 
 - [ ] guided automation bundles and conservative defaults;
 - [ ] plain-language autonomy setup;

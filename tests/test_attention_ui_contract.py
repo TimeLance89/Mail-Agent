@@ -15,8 +15,8 @@ def test_attention_workbench_and_routes_are_wired():
     main = (ROOT / "apps/gateway/mail_agent_gateway/main.py").read_text(encoding="utf-8")
     desktop = (ROOT / "apps/launcher/mail_agent_launcher/desktop_runtime.py").read_text(encoding="utf-8")
 
-    assert "/assets/workbench-ui.js?v=0.17.3" in index
-    assert "/assets/attention-center.css?v=0.17.3" in index
+    assert "/assets/workbench-ui.js?v=0.18.0" in index
+    assert "/assets/attention-center.css?v=0.18.0" in index
     assert "/assets/attention-center.js" not in index
     assert "Wartet auf dich" in js
     assert "/v1/attention?limit=200" in js

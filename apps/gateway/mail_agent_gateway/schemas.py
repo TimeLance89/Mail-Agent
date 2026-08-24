@@ -37,6 +37,11 @@ class OnboardingCompleteRequest(BaseModel):
     model: str
 
 
+class OnboardingResetRequest(BaseModel):
+    confirmation: Literal["RESET ONBOARDING"]
+    actor: str = Field(default="local-user", min_length=1, max_length=200)
+
+
 class LLMSettingsRequest(BaseModel):
     provider: Literal["ollama", "codex"]
     model: str = Field(min_length=1, max_length=200)

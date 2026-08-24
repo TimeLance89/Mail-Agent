@@ -165,3 +165,31 @@ def test_briefing_marks_calendar_unavailable_without_failing_mail_summary():
 
     assert result["headline"] == "Du musst gerade nichts entscheiden."
     assert result["calendar"] == {"available": False, "error": "not_connected"}
+    assert result["learning"] == {
+        "enabled": False,
+        "status": "off",
+        "confirmed_preferences": 0,
+        "pending_suggestions": 0,
+        "profile_version": 0,
+    }
+
+
+def test_briefing_exposes_only_owner_controlled_learning_status():
+    learning = {
+        "enabled": True,
+        "status": "active",
+        "confirmed_preferences": 3,
+        "pending_suggestions": 1,
+        "profile_version": 2,
+    }
+    result = build_daily_briefing(
+        attention=[],
+        approvals=[],
+        drafts=[],
+        conversations=[],
+        learning=learning,
+        now=NOW,
+    )
+
+    assert result["learning"] == learning
+    assert result["side_effects"] is False

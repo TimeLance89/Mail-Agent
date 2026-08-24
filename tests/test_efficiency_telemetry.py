@@ -59,7 +59,7 @@ def test_efficiency_savings_metric_is_loaded_and_has_no_dom_observer():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
     source = (ROOT / "apps/web/efficiency-metrics-ui.js").read_text(encoding="utf-8")
 
-    assert "/assets/efficiency-metrics-ui.js?v=0.17.3" in index
+    assert "/assets/efficiency-metrics-ui.js?v=0.18.0" in index
     assert "estimated_tokens_avoided" in source
     assert "Tokens vermieden" in source
     assert "new MutationObserver" not in source
