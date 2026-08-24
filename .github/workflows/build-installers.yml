@@ -443,6 +443,61 @@ jobs:
           git tag -a "${TAG}" -m "MAIL-AGENT ${TAG}"
           git push origin "refs/tags/${TAG}"
 
+  publish-current-version:
+    if: github.ref == 'refs/heads/main'
+    needs: [windows, standalone, tag-version]
+    runs-on: ubuntu-latest
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: Mail-Agent-*
+          path: release-assets
+          merge-multiple: true
+      - name: Publish verified main build
+        shell: bash
+        run: |
+          set -euo pipefail
+          VERSION=$(python -c "import tomllib; print(tomllib.load(open('pyproject.toml','rb'))['project']['version'])")
+          TAG="v${VERSION}"
+          EXPECTED=(
+            Mail-Agent-Setup.exe
+            Mail-Agent-Linux-x64.tar.gz
+            Mail-Agent-macOS.zip
+          )
+
+          for ASSET in "${EXPECTED[@]}"; do
+            test -f "release-assets/${ASSET}"
+          done
+
+          if ! gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release create "${TAG}" \
+              --verify-tag \
+              --title "MAIL-AGENT ${TAG}" \
+              --generate-notes
+          fi
+
+          COMPLETE=true
+          for ASSET in "${EXPECTED[@]}"; do
+            if ! gh release view "${TAG}" --json assets \
+              --jq '.assets[].name' | grep -Fxq "${ASSET}"; then
+              COMPLETE=false
+            fi
+          done
+          if [[ "${COMPLETE}" == "true" ]]; then
+            echo "${TAG} already contains every verified installer."
+            exit 0
+          fi
+
+          gh release upload "${TAG}" release-assets/* --clobber
+          for ASSET in "${EXPECTED[@]}"; do
+            gh release view "${TAG}" --json assets \
+              --jq '.assets[].name' | grep -Fxq "${ASSET}"
+          done
+          echo "Published and verified ${TAG} with ${#EXPECTED[@]} installers."
+
   publish-version:
     if: startsWith(github.ref, 'refs/tags/v')
     needs: [windows, standalone]
