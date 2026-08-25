@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.19.1 — 2026-08-25
+
+### Fixed
+
+- added `owner_instruction` support to the adaptive mail-agent adapter used by the production
+  runtime;
+- owner-directed work now bypasses deterministic and local-triage shortcuts so an explicit owner
+  instruction cannot be ignored or replaced by routine classification;
+- added a regression test covering the exact adaptive production path behind “An Agenten senden”.
+
 ## 0.19.0 — 2026-08-25
 
 ### Added

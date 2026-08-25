@@ -71,7 +71,7 @@
         ${railButton('system','shield','System')}
       </aside>
       <aside class="wb-context">
-        <div class="wb-brand"><div><span class="wb-brand-title">MAIL-AGENT</span><span class="wb-brand-sub">${esc(agentName)} · persönlicher Operations Agent</span></div><span class="wb-build">0.19.0</span></div>
+        <div class="wb-brand"><div><span class="wb-brand-title">MAIL-AGENT</span><span class="wb-brand-sub">${esc(agentName)} · persönlicher Operations Agent</span></div><span class="wb-build">0.19.1</span></div>
         <div class="wb-nav-group"><div class="wb-nav-caption">Arbeit</div>
           ${navLink('overview','Briefing','home')}
           ${navLink('inbox','Eingang','inbox',dashboard.messages.length||'')}
@@ -223,7 +223,7 @@
       panel = `<div class="wb-settings-title"><h2>Regeln</h2><p>Absender und Domains deterministisch steuern. Diese Regeln werden nach der Modellanalyse im Gateway erzwungen.</p></div><div class="wb-setting-section"><div class="wb-settings-actions top"><button class="wb-btn" id="settings-add-rule">Regel hinzufügen</button><button class="wb-btn primary" id="wb-save-rules">Regeln speichern</button></div><div class="rule-editor wb-rule-editor">${rules.length?rules.map(ruleRow).join(''):'<div class="wb-empty compact"><div><b>Noch keine speziellen Regeln</b>Neue Regeln können Absender oder ganze Domains deterministisch behandeln.</div></div>'}</div></div>`;
     }
     if (wb.settingsSection === 'software') {
-      const current = updateStatus?.current_version || '0.19.0';
+      const current = updateStatus?.current_version || '0.19.1';
       const available = !!updateStatus?.available;
       panel = `<div class="wb-settings-title"><h2>Software</h2><p>Update-Kanal, installierte Version und verifizierter In-Place-Updater.</p></div><div class="wb-setting-section"><div class="wb-setting-row"><div class="wb-setting-label"><b>Installierte Version</b></div><div class="wb-control"><span class="wb-tag">v${esc(current)}</span></div></div><div class="wb-setting-row"><div class="wb-setting-label"><b>Update-Kanal</b><p>Installer wird per SHA-256 und Release-Digest geprüft.</p></div><div class="wb-control">${esc(updateStatus?.channel||'Preview')}</div></div><div class="wb-settings-actions"><button class="wb-btn" id="check-update">Jetzt nach Updates suchen</button>${available?'<button class="wb-btn primary" id="install-update">Update installieren</button>':''}</div>${updateStatus?.error?`<div class="wb-side-note"><strong>Update-Kanal nicht erreichbar</strong>${esc(updateStatus.error)}</div>`:''}</div>`;
       if (!updateStatus && !updateLoading) setTimeout(()=>checkUpdate(true),0);

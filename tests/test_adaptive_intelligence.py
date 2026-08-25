@@ -39,6 +39,7 @@ class CountingProvider(LLMProvider):
 
     def __init__(self, payload: str | None = None):
         self.calls = 0
+        self.requests: list[CompletionRequest] = []
         self.payload = payload or json.dumps(
             {
                 "action": "classify",
@@ -64,6 +65,7 @@ class CountingProvider(LLMProvider):
 
     async def complete(self, request: CompletionRequest) -> str:
         self.calls += 1
+        self.requests.append(request)
         return self.payload
 
 
@@ -225,6 +227,50 @@ def test_deterministic_bulk_classification_skips_llm_and_records_provenance(tmp_
     summary = usage.summary(days=1)
     assert summary["codex_calls_avoided"] == 1
     assert summary["llm_calls"] == 0
+
+
+def test_owner_instruction_bypasses_adaptive_shortcuts_and_reaches_mail_agent(tmp_path: Path):
+    behavior = AgentBehaviorSettings(newsletter_action=MailHandlingAction.ARCHIVE)
+    state = _state(tmp_path, behavior=behavior)
+    usage = AdaptiveSignalStore(tmp_path / "adaptive.db")
+    usage.record_signals(
+        "mb",
+        "m1",
+        {
+            "list_unsubscribe": True,
+            "list_id": True,
+            "precedence": "bulk",
+            "bulk_hint": True,
+        },
+    )
+    provider = CountingProvider()
+    identity_manager = IdentityManager(tmp_path / "identity")
+    identity = identity_manager.create(owner_id="owner", agent_name="Agent", usage_type="work")
+    agent = AdaptiveMailAgent(
+        policy_engine=PolicyEngine(),
+        state_store=state,
+        providers={"codex": provider},
+        conversation_store=DummyConversationStore(),
+        signal_store=usage,
+        owner_profile=OwnerProfileStore(tmp_path / "profile.json"),
+    )
+
+    analysis = asyncio.run(
+        agent.analyze(
+            profile=_profile(),
+            provider=provider,
+            model="luna",
+            message=_message(),
+            identity=identity,
+            sign_payload=identity_manager.sign,
+            owner_instruction="Bereite eine persönliche Antwort vor.",
+        )
+    )
+
+    request_payload = json.loads(provider.requests[0].user)
+    assert provider.calls == 1
+    assert request_payload["owner_instruction"] == "Bereite eine persönliche Antwort vor."
+    assert analysis.proposal.metadata["decision_origin"] == "llm"
 
 
 def test_uncertain_mail_falls_back_to_configured_llm(tmp_path: Path):

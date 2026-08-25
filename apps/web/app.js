@@ -77,7 +77,7 @@ function stepper() {
   return `<div class="setup-stepper">${onboardingSteps.map((label, i) => `<div class="setup-dot ${i < step ? 'done' : ''} ${i === step ? 'active' : ''}"><span>${i < step ? icon('check',13) : i+1}</span><small>${label}</small></div>`).join('')}</div>`;
 }
 function setupLayout(content) {
-  return `<main class="setup-page"><section class="setup-aside">${brand()}<div class="setup-aside-copy"><span class="kicker">SETUP IN WENIGEN MINUTEN</span><h1>Dein Postfach.<br><em>Dein Agent.</em></h1><p>MAIL-AGENT bereitet Antworten, Entscheidungen, Termine und dein Tagesbriefing lokal vor.</p></div><div class="trust-pill">${icon('shield',18)}<span><b>Local-first</b><small>Schlüssel und Mail-Zugang bleiben bei dir.</small></span></div></section><section class="setup-main"><div class="setup-top"><span>Schritt ${step+1} von ${onboardingSteps.length}</span><b>${onboardingSteps[step]}</b></div>${stepper()}<div class="setup-card">${content}</div><div class="setup-foot">MAIL-AGENT v0.19.0 · Lokales Gateway</div></section></main>`;
+  return `<main class="setup-page"><section class="setup-aside">${brand()}<div class="setup-aside-copy"><span class="kicker">SETUP IN WENIGEN MINUTEN</span><h1>Dein Postfach.<br><em>Dein Agent.</em></h1><p>MAIL-AGENT bereitet Antworten, Entscheidungen, Termine und dein Tagesbriefing lokal vor.</p></div><div class="trust-pill">${icon('shield',18)}<span><b>Local-first</b><small>Schlüssel und Mail-Zugang bleiben bei dir.</small></span></div></section><section class="setup-main"><div class="setup-top"><span>Schritt ${step+1} von ${onboardingSteps.length}</span><b>${onboardingSteps[step]}</b></div>${stepper()}<div class="setup-card">${content}</div><div class="setup-foot">MAIL-AGENT v0.19.1 · Lokales Gateway</div></section></main>`;
 }
 function field(label, id, value='', type='text', placeholder='') {
   return `<label class="field"><span>${label}</span><input id="${id}" type="${type}" value="${esc(value)}" placeholder="${esc(placeholder)}"></label>`;
@@ -528,7 +528,7 @@ async function runAgentNow(){
 function renderUpdatePanel(){
   const grid=document.querySelector('.settings-grid');
   if(!grid)return;
-  const current=updateStatus?.current_version||'0.19.0';
+  const current=updateStatus?.current_version||'0.19.1';
   const available=!!updateStatus?.available;
   const error=updateStatus?.error||'';
   const headline=available?`Version ${esc(updateStatus.latest_version)} verfügbar`:error?'Update-Kanal nicht erreichbar':'Du bist auf dem neuesten Stand';
