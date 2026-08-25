@@ -78,22 +78,22 @@ def test_release_version_is_synchronized_for_0190():
     codex = (ROOT / "apps/gateway/mail_agent_gateway/codex_usage_reader.py").read_text(encoding="utf-8")
     workflow = (ROOT / ".github/workflows/build-installers.yml").read_text(encoding="utf-8")
 
-    assert 'version = "0.19.0"' in pyproject
+    assert 'version = "0.19.1"' in pyproject
     assert 'mail-agent = "mail_agent_launcher.v190_entry:main"' in pyproject
-    assert 'APP_VERSION = "0.19.0"' in gateway_v190
-    assert 'APP_VERSION = "0.19.0"' in launcher_v190
+    assert 'APP_VERSION = "0.19.1"' in gateway_v190
+    assert 'APP_VERSION = "0.19.1"' in launcher_v190
     assert 'APP_VERSION = "0.18.2"' in gateway_v180
     assert 'APP_VERSION = "0.18.2"' in launcher_v180
     assert "from mail_agent_launcher.v190_entry import main" in launcher_entry
-    assert 'app_version: str = "0.19.0"' in identity
-    assert '#define MyAppVersion "0.19.0"' in installer
-    assert "const APP_VERSION = '0.19.0'" in desktop
-    assert '"version": "0.19.0"' in codex
-    assert "/assets/startup-rescue.js?v=0.19.0" in index
-    assert "/assets/calendar-ui.js?v=0.19.0" in index
-    assert "/assets/v171-ux.js?v=0.19.0" in index
-    assert "/assets/v172-ux.js?v=0.19.0" in index
-    assert "/assets/desktop-links.js?v=0.19.0" in index
+    assert 'app_version: str = "0.19.1"' in identity
+    assert '#define MyAppVersion "0.19.1"' in installer
+    assert "const APP_VERSION = '0.19.1'" in desktop
+    assert '"version": "0.19.1"' in codex
+    assert "/assets/startup-rescue.js?v=0.19.1" in index
+    assert "/assets/calendar-ui.js?v=0.19.1" in index
+    assert "/assets/v171-ux.js?v=0.19.1" in index
+    assert "/assets/v172-ux.js?v=0.19.1" in index
+    assert "/assets/desktop-links.js?v=0.19.1" in index
     assert 'APP_VERSION = "0.17.2"' in gateway_v172
     assert 'APP_VERSION = "0.17.2"' in launcher_v172
     assert 'APP_VERSION = "0.17.1"' in gateway_v171

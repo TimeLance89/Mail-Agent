@@ -16,19 +16,19 @@ V172_UX = ROOT / "apps/web/v172-ux.js"
 
 def test_calendar_workbench_is_loaded_and_cache_busted():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
-    assert "/assets/calendar-ui.js?v=0.19.0" in index
-    assert "/assets/calendar-workbench.js?v=0.19.0" in index
-    assert "/assets/calendar-mail-suggestions.js?v=0.19.0" in index
-    assert "/assets/v171-ux.js?v=0.19.0" in index
-    assert "/assets/v172-ux.js?v=0.19.0" in index
-    assert index.index("/assets/calendar-workbench.js?v=0.19.0") < index.index(
-        "/assets/calendar-mail-suggestions.js?v=0.19.0"
+    assert "/assets/calendar-ui.js?v=0.19.1" in index
+    assert "/assets/calendar-workbench.js?v=0.19.1" in index
+    assert "/assets/calendar-mail-suggestions.js?v=0.19.1" in index
+    assert "/assets/v171-ux.js?v=0.19.1" in index
+    assert "/assets/v172-ux.js?v=0.19.1" in index
+    assert index.index("/assets/calendar-workbench.js?v=0.19.1") < index.index(
+        "/assets/calendar-mail-suggestions.js?v=0.19.1"
     )
-    assert index.index("/assets/dashboard-live.js?v=0.19.0") < index.index(
-        "/assets/v171-ux.js?v=0.19.0"
+    assert index.index("/assets/dashboard-live.js?v=0.19.1") < index.index(
+        "/assets/v171-ux.js?v=0.19.1"
     )
-    assert index.index("/assets/v171-ux.js?v=0.19.0") < index.index(
-        "/assets/v172-ux.js?v=0.19.0"
+    assert index.index("/assets/v171-ux.js?v=0.19.1") < index.index(
+        "/assets/v172-ux.js?v=0.19.1"
     )
 
 

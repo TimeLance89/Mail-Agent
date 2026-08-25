@@ -850,12 +850,14 @@ class AdaptiveMailAgent(MailAgent):
         identity: AgentIdentity,
         sign_payload: Any,
         brain_context: str = "",
+        owner_instruction: str | None = None,
     ) -> AgentAnalysis:
         behavior = self._behavior()
         primary_is_codex = getattr(provider, "name", "") == "codex"
+        trusted_owner_instruction = (owner_instruction or "").strip()
         pre = self.preclassifier.classify(message, behavior)
         baseline_estimate = _estimate_tokens(message.body + "\n" + "\n".join(item.body for item in message.thread_context))
-        if pre.decisive:
+        if not trusted_owner_instruction and pre.decisive:
             proposal = self._proposal_from_preclassification(message, pre)
             proposal = stamp_outgoing_proposal(
                 proposal,
@@ -888,7 +890,7 @@ class AdaptiveMailAgent(MailAgent):
             or triage_route.model != primary.model
             or triage_route.source == "expert_override"
         )
-        if use_triage:
+        if not trusted_owner_instruction and use_triage:
             started = time.perf_counter()
             triage, prompt_tokens, completion_tokens, token_source = await self._local_triage(
                 route=triage_route,
@@ -975,6 +977,7 @@ class AdaptiveMailAgent(MailAgent):
             identity=identity,
             sign_payload=sign_payload,
             brain_context=effective_brain,
+            owner_instruction=trusted_owner_instruction or None,
         )
         duration_ms = round((time.perf_counter() - started) * 1000)
         metadata = dict(analysis.proposal.metadata)

@@ -15,7 +15,7 @@ requires human approval, or is denied. The product direction and delivery sequen
 
 Release changes are listed in [`CHANGELOG.md`](CHANGELOG.md).
 
-## Current preview: v0.19.0
+## Current preview: v0.19.1
 
 Owner decisions can now be handed back to the agent directly from “Wartet auf dich”. The agent uses
 the instruction to prepare the next safe action, opens the resulting draft or approval, and keeps
