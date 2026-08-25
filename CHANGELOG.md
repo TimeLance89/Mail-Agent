@@ -1,5 +1,15 @@
 # Changelog
 
+## 0.18.1 — 2026-08-25
+
+### Fixed
+
+- briefing decisions now open the exact matching mail or approval instead of only switching views;
+- stale briefing items completed or archived in the background refresh immediately and show a clear
+  completion notice instead of an empty “Wartet auf dich” screen;
+- owner reply work opens in the inbox rather than the unrelated “Wartet auf andere” queue;
+- live dashboard refreshes now invalidate the briefing cache so completed work disappears promptly.
+
 ## 0.18.0 — 2026-08-24
 
 ### Added

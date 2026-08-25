@@ -209,7 +209,7 @@ def build_daily_briefing(
                 score=94 if overdue else 76,
                 title=compact["title"],
                 summary=compact["summary"],
-                view="waiting",
+                view="inbox",
                 action_label="Antwort vorbereiten",
                 mailbox_id=mailbox_id or None,
                 message_id=last_message_id or None,

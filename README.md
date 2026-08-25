@@ -15,7 +15,11 @@ requires human approval, or is denied. The product direction and delivery sequen
 
 Release changes are listed in [`CHANGELOG.md`](CHANGELOG.md).
 
-## Current preview: v0.18.0
+## Current preview: v0.18.1
+
+The patch release keeps briefing decisions and their destination views synchronized. Clicking a
+briefing item now opens that exact mail or approval; work completed in the background is refreshed
+with a clear status instead of leaving an empty detail view.
 
 - Local FastAPI gateway on port `8765`
 - Separate public-identity registry service on port `8770`
