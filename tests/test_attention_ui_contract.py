@@ -15,14 +15,17 @@ def test_attention_workbench_and_routes_are_wired():
     main = (ROOT / "apps/gateway/mail_agent_gateway/main.py").read_text(encoding="utf-8")
     desktop = (ROOT / "apps/launcher/mail_agent_launcher/desktop_runtime.py").read_text(encoding="utf-8")
 
-    assert "/assets/workbench-ui.js?v=0.18.2" in index
-    assert "/assets/attention-center.css?v=0.18.2" in index
+    assert "/assets/workbench-ui.js?v=0.19.0" in index
+    assert "/assets/attention-center.css?v=0.19.0" in index
     assert "/assets/attention-center.js" not in index
     assert "Wartet auf dich" in js
     assert "/v1/attention?limit=200" in js
     assert "/v1/attention/resolve" in js
+    assert "/v1/attention/instruct" in js
+    assert "An Agenten senden" in js
     assert '@app.get("/v1/attention")' in main
     assert '@app.post("/v1/attention/resolve")' in main
+    assert '@app.post("/v1/attention/instruct")' in main
     assert "shadow_reports.recent_reports" in main
     assert "attention_source" in main
     assert "Shadow-Ergebnis" in js

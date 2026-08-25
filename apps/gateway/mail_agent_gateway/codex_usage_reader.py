@@ -102,7 +102,7 @@ class CodexUsageReader:
                         "clientInfo": {
                             "name": "mail_agent",
                             "title": "MAIL-AGENT",
-                            "version": "0.18.2",
+                            "version": "0.19.0",
                         }
                     },
                 },

@@ -254,6 +254,7 @@ class AgentRuntime:
         simulation: bool = False,
         shadow_run_id: str | None = None,
         coalesced_count: int = 1,
+        owner_instruction: str | None = None,
     ) -> dict[str, Any]:
         config = self._configuration()
         provider_name = str(config["provider"])
@@ -311,6 +312,7 @@ class AgentRuntime:
                     identity=identity,
                     sign_payload=self.identity_manager.sign,
                     brain_context=brain_context,
+                    owner_instruction=owner_instruction,
                 )
             except Exception as exc:
                 self.activity.record(

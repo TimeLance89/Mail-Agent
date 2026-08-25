@@ -11,14 +11,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_workbench_is_first_class_and_adaptive_assets_are_loaded():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
-    assert "/assets/workbench.css?v=0.18.2" in index
-    assert "/assets/workbench-ui.js?v=0.18.2" in index
-    assert "/assets/adaptive-intelligence.css?v=0.18.2" in index
-    assert "/assets/adaptive-intelligence-ui.js?v=0.18.2" in index
-    assert "/assets/calendar-ui.js?v=0.18.2" in index
-    assert "/assets/dashboard-live.js?v=0.18.2" in index
-    assert "/assets/v171-ux.js?v=0.18.2" in index
-    assert "/assets/v172-ux.js?v=0.18.2" in index
+    assert "/assets/workbench.css?v=0.19.0" in index
+    assert "/assets/workbench-ui.js?v=0.19.0" in index
+    assert "/assets/adaptive-intelligence.css?v=0.19.0" in index
+    assert "/assets/adaptive-intelligence-ui.js?v=0.19.0" in index
+    assert "/assets/calendar-ui.js?v=0.19.0" in index
+    assert "/assets/dashboard-live.js?v=0.19.0" in index
+    assert "/assets/v171-ux.js?v=0.19.0" in index
+    assert "/assets/v172-ux.js?v=0.19.0" in index
     assert "/assets/attention-center.js" not in index
 
 

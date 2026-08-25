@@ -1,5 +1,22 @@
 # Changelog
 
+## 0.19.0 — 2026-08-25
+
+### Added
+
+- visible “An Agenten senden” handoff directly below owner decisions in “Wartet auf dich”;
+- trusted owner-directed analysis that keeps email content untrusted and all deterministic safety
+  boundaries intact;
+- automatic routing to the prepared draft or approval after the agent processes an instruction;
+- explicit “Ohne Auftrag erledigen” path for decisions that need no further agent work.
+
+### Safety
+
+- owner instructions cannot override mailbox scope, recipient enforcement, Agent-ID signatures,
+  action policy or approval requirements;
+- sending and forwarding remain separately approval-gated;
+- blocked instructions remain visible instead of being silently marked complete.
+
 ## 0.18.2 — 2026-08-25
 
 ### Fixed

@@ -9,7 +9,7 @@ def test_workbench_exposes_conversation_intelligence():
 
 def test_0180_assets_are_cache_busted():
     html=(ROOT/"apps/web/index.html").read_text(encoding="utf-8")
-    assert "?v=0.18.2" in html
+    assert "?v=0.19.0" in html
     assert "?v=0.17.2" not in html
     assert "?v=0.17.1" not in html
     assert "?v=0.17.0" not in html

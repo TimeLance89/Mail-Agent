@@ -149,14 +149,14 @@ def test_v172_workbench_contract_remains_exposed_in_0180_bundle():
     entry = (root / "apps/launcher/mail_agent_launcher_entry.py").read_text(encoding="utf-8")
     gateway = (root / "apps/gateway/mail_agent_gateway/main_v172.py").read_text(encoding="utf-8")
 
-    assert "/assets/v172-ux.js?v=0.18.2" in index
+    assert "/assets/v172-ux.js?v=0.19.0" in index
     assert "data.draftDiscard" in ux or "draftDiscard" in ux
     assert "/discard" in ux
     assert "prepare-mail-reply" in ux
     assert "Freigeben & senden" in ux
     assert "fetch('/health'" in ux
     assert "MutationObserver" not in ux
-    assert "mail_agent_launcher.v180_entry" in entry
+    assert "mail_agent_launcher.v190_entry" in entry
     assert "_approve_with_confirmation_reply" in gateway
     assert "mail_followup_required" in gateway
     assert "writerwithoutprivateaccess" in gateway
