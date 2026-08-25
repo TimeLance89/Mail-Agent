@@ -17,7 +17,7 @@ from fastapi.responses import FileResponse, HTMLResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 
-from mail_agent_core.agent import MailAgent
+from mail_agent_core.agent import MailAgent, MailMessageContext
 from mail_agent_core.identity import IdentityManager
 from mail_agent_core.models import (
     AgentBehaviorSettings,
@@ -48,6 +48,7 @@ from .registry_client import RegistryClient
 from .schemas import (
     AgentAnalyzeRequest,
     AgentRunRequest,
+    AttentionInstructionRequest,
     AttentionResolveRequest,
     BehaviorSettingsRequest,
     ConversationSnoozeRequest,
@@ -305,7 +306,7 @@ async def lifespan(_: FastAPI):
                 await task
 
 
-APP_VERSION = "0.18.2"
+APP_VERSION = "0.19.0"
 update_client = UpdateClient(
     feed_url=settings.update_feed_url,
     release_page=settings.update_release_page,
@@ -1201,6 +1202,103 @@ async def resolve_attention(body: AttentionResolveRequest) -> dict:
         details={"mailbox_id": body.mailbox_id, "message_id": body.message_id},
     )
     return item
+
+
+@app.post("/v1/attention/instruct")
+async def instruct_attention_agent(body: AttentionInstructionRequest) -> dict:
+    """Hand an authenticated owner decision back to the agent for policy-bound execution."""
+
+    _configuration_or_409()
+    stored = mail_store.get_message(body.mailbox_id, body.message_id)
+    if stored is None:
+        raise HTTPException(status_code=404, detail="Attention message not found")
+
+    message = MailMessageContext(
+        mailbox_id=body.mailbox_id,
+        message_id=str(
+            stored.get("remote_id")
+            or stored.get("internet_message_id")
+            or stored.get("uid")
+        ),
+        thread_id=str(stored.get("remote_thread_id") or stored.get("thread_key") or "") or None,
+        sender=str(stored.get("sender") or ""),
+        recipients=list(stored.get("recipients") or []),
+        subject=str(stored.get("subject") or ""),
+        body=str(stored.get("body_text") or ""),
+        sent_at=stored.get("sent_at"),
+    )
+    try:
+        result = await agent_runtime.analyze_message(
+            message,
+            create_artifacts=True,
+            minimum_confidence=0.0,
+            trace_trigger="owner_instruction",
+            owner_instruction=body.instruction.strip(),
+        )
+    except RuntimeError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Agent could not process the instruction: {exc}") from exc
+
+    policy_allowed = bool((result.get("policy") or {}).get("allowed"))
+    approval = result.get("approval")
+    draft = result.get("draft")
+    execution = result.get("execution")
+    accepted = policy_allowed
+    resolved = None
+    if accepted:
+        resolved = mail_store.resolve_attention(
+            body.mailbox_id,
+            body.message_id,
+            owner_note=body.instruction,
+        )
+
+    next_view = "approvals" if approval else "drafts" if draft else "attention"
+    if execution or (accepted and not approval and not draft):
+        next_view = "overview"
+    outcome = (
+        "approval_required"
+        if approval
+        else "draft_created"
+        if draft
+        else "executed"
+        if execution
+        else "accepted"
+        if accepted
+        else "blocked"
+    )
+    audit_log.append(
+        "owner_instruction_processed",
+        actor=body.actor,
+        details={
+            "mailbox_id": body.mailbox_id,
+            "message_id": body.message_id,
+            "outcome": outcome,
+            "approval_id": approval.get("approval_id") if approval else None,
+            "draft_id": draft.get("draft_id") if draft else None,
+            "trace_id": result.get("trace_id"),
+        },
+    )
+    return {
+        "accepted": accepted,
+        "resolved": resolved,
+        "outcome": outcome,
+        "next_view": next_view,
+        "approval_id": approval.get("approval_id") if approval else None,
+        "draft_id": draft.get("draft_id") if draft else None,
+        "message": (
+            "Der Agent hat deine Anweisung verarbeitet. Die Aktion wartet auf deine Freigabe."
+            if approval
+            else "Der Agent hat einen Entwurf für dich vorbereitet."
+            if draft
+            else "Der Agent hat die erlaubte Aktion ausgeführt."
+            if execution
+            else "Der Agent hat deine Entscheidung übernommen."
+            if accepted
+            else "Die Anweisung wurde von der Sicherheits-Policy blockiert und bleibt offen."
+        ),
+        "result": result,
+    }
 
 
 

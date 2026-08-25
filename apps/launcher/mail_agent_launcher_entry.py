@@ -1,4 +1,4 @@
-from mail_agent_launcher.v180_entry import main
+from mail_agent_launcher.v190_entry import main
 
 
 if __name__ == "__main__":

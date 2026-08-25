@@ -15,11 +15,11 @@ requires human approval, or is denied. The product direction and delivery sequen
 
 Release changes are listed in [`CHANGELOG.md`](CHANGELOG.md).
 
-## Current preview: v0.18.2
+## Current preview: v0.19.0
 
-The patch release keeps briefing decisions and their destination views synchronized. Clicking a
-briefing item now opens that exact mail or approval; work completed in the background is refreshed
-with a clear status instead of leaving an empty detail view.
+Owner decisions can now be handed back to the agent directly from “Wartet auf dich”. The agent uses
+the instruction to prepare the next safe action, opens the resulting draft or approval, and keeps
+all sending, policy and identity boundaries intact.
 
 - Local FastAPI gateway on port `8765`
 - Separate public-identity registry service on port `8770`
@@ -149,7 +149,7 @@ source .venv/bin/activate  # Windows: .venv\Scripts\activate
 pip install -e '.[dev]'
 
 uvicorn mail_agent_registry.main:app --app-dir apps/registry --port 8770 --reload
-uvicorn mail_agent_gateway.main_v180:app --app-dir apps/gateway --port 8765 --reload
+uvicorn mail_agent_gateway.main_v190:app --app-dir apps/gateway --port 8765 --reload
 ```
 
 Open `http://127.0.0.1:8765`. The UI has no Node/npm runtime dependency.

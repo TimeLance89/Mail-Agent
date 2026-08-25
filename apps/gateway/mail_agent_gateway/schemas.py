@@ -72,6 +72,13 @@ class AttentionResolveRequest(BaseModel):
     actor: str = Field(default="local-user", min_length=1, max_length=200)
 
 
+class AttentionInstructionRequest(BaseModel):
+    mailbox_id: str = Field(min_length=1, max_length=128)
+    message_id: str = Field(min_length=1, max_length=1024)
+    instruction: str = Field(min_length=1, max_length=4000)
+    actor: str = Field(default="local-user", min_length=1, max_length=200)
+
+
 class ConversationSnoozeRequest(BaseModel):
     mailbox_id: str = Field(min_length=1, max_length=128)
     thread_id: str = Field(min_length=1, max_length=1024)
