@@ -19,7 +19,15 @@ from fastapi.staticfiles import StaticFiles
 
 from mail_agent_core.agent import MailAgent
 from mail_agent_core.identity import IdentityManager
-from mail_agent_core.models import AgentBehaviorSettings, AgentProfile, AgentRule, MailActionType, MailCategory, RuleMode
+from mail_agent_core.models import (
+    AgentBehaviorSettings,
+    AgentExecutionMode,
+    AgentProfile,
+    AgentRule,
+    MailActionType,
+    MailCategory,
+    RuleMode,
+)
 from mail_agent_core.policy import PolicyEngine
 from mail_agent_core.providers import CodexCliProvider, OllamaProvider
 from mail_agent_core.update import UpdateClient
@@ -297,7 +305,7 @@ async def lifespan(_: FastAPI):
                 await task
 
 
-APP_VERSION = "0.18.1"
+APP_VERSION = "0.18.2"
 update_client = UpdateClient(
     feed_url=settings.update_feed_url,
     release_page=settings.update_release_page,

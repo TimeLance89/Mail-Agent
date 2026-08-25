@@ -1,5 +1,5 @@
 #define MyAppName "MAIL-AGENT"
-#define MyAppVersion "0.18.1"
+#define MyAppVersion "0.18.2"
 #define MyAppPublisher "MAIL-AGENT"
 #define MyAppExeName "Mail-Agent.exe"
 

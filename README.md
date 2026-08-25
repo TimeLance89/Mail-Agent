@@ -15,7 +15,7 @@ requires human approval, or is denied. The product direction and delivery sequen
 
 Release changes are listed in [`CHANGELOG.md`](CHANGELOG.md).
 
-## Current preview: v0.18.1
+## Current preview: v0.18.2
 
 The patch release keeps briefing decisions and their destination views synchronized. Clicking a
 briefing item now opens that exact mail or approval; work completed in the background is refreshed

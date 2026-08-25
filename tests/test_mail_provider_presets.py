@@ -10,9 +10,9 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_provider_setup_is_loaded_and_versioned():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
-    assert "/assets/mail-provider-setup.css?v=0.18.1" in index
-    assert "/assets/mail-provider-setup.js?v=0.18.1" in index
-    assert "app.js?v=0.18.1" in index
+    assert "/assets/mail-provider-setup.css?v=0.18.2" in index
+    assert "/assets/mail-provider-setup.js?v=0.18.2" in index
+    assert "app.js?v=0.18.2" in index
 
 
 def test_provider_setup_javascript_syntax():
