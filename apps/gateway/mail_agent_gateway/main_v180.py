@@ -5,7 +5,7 @@ from typing import Any
 from . import main_v173 as previous
 from .schemas import OnboardingResetRequest
 
-APP_VERSION = "0.18.0"
+APP_VERSION = "0.18.1"
 base = previous.base
 owner_profile_store = previous.owner_profile_store
 

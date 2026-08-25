@@ -11,14 +11,14 @@ ROOT = Path(__file__).resolve().parents[1]
 
 def test_workbench_is_first_class_and_adaptive_assets_are_loaded():
     index = (ROOT / "apps/web/index.html").read_text(encoding="utf-8")
-    assert "/assets/workbench.css?v=0.18.0" in index
-    assert "/assets/workbench-ui.js?v=0.18.0" in index
-    assert "/assets/adaptive-intelligence.css?v=0.18.0" in index
-    assert "/assets/adaptive-intelligence-ui.js?v=0.18.0" in index
-    assert "/assets/calendar-ui.js?v=0.18.0" in index
-    assert "/assets/dashboard-live.js?v=0.18.0" in index
-    assert "/assets/v171-ux.js?v=0.18.0" in index
-    assert "/assets/v172-ux.js?v=0.18.0" in index
+    assert "/assets/workbench.css?v=0.18.1" in index
+    assert "/assets/workbench-ui.js?v=0.18.1" in index
+    assert "/assets/adaptive-intelligence.css?v=0.18.1" in index
+    assert "/assets/adaptive-intelligence-ui.js?v=0.18.1" in index
+    assert "/assets/calendar-ui.js?v=0.18.1" in index
+    assert "/assets/dashboard-live.js?v=0.18.1" in index
+    assert "/assets/v171-ux.js?v=0.18.1" in index
+    assert "/assets/v172-ux.js?v=0.18.1" in index
     assert "/assets/attention-center.js" not in index
 
 
@@ -116,6 +116,24 @@ def test_workbench_has_real_filters_and_command_palette_not_preview_controls():
     assert 'data-command-action="run"' in source
     assert "design-preview" not in source
     assert "installDemoData" not in source
+
+
+def test_briefing_click_targets_the_exact_item_and_recovers_from_stale_work():
+    source = (ROOT / "apps/web/workbench-ui.js").read_text(encoding="utf-8")
+
+    for marker in (
+        "data-briefing-id",
+        "openBriefingItem",
+        "sameMailTarget",
+        "wb.selectedAttention = index",
+        "wb.selectedMessage = index",
+        "wb.selectedApproval = index",
+        "loadDailyBriefing(true, true)",
+        "Dieser Punkt wurde inzwischen vom Agenten erledigt",
+    ):
+        assert marker in source
+
+    assert "wb.refreshBriefing = (silent=true) => loadDailyBriefing(silent, true)" in source
 
 
 @pytest.mark.parametrize(

@@ -102,6 +102,31 @@ def test_briefing_deduplicates_attention_and_conversation_for_same_mail():
     assert result["focus"][0]["kind"] == "decision"
 
 
+def test_briefing_opens_owner_reply_work_in_the_inbox_not_waiting_on_others():
+    result = build_daily_briefing(
+        attention=[],
+        approvals=[],
+        drafts=[],
+        conversations=[
+            {
+                "mailbox_id": "mb_1",
+                "thread_id": "thread-owner-turn",
+                "last_message_id": "mail-owner-turn",
+                "status": "to_reply",
+                "subject": "Bitte um Entscheidung",
+                "rationale": "Der Besitzer ist am Zug.",
+            }
+        ],
+        now=NOW,
+    )
+
+    assert result["focus"][0]["kind"] == "follow_up"
+    assert result["focus"][0]["action"] == {
+        "view": "inbox",
+        "label": "Antwort vorbereiten",
+    }
+
+
 def test_briefing_separates_ready_drafts_waiting_threads_and_calendar():
     event = {
         "id": "event-1",

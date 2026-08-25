@@ -149,7 +149,7 @@ def test_v172_workbench_contract_remains_exposed_in_0180_bundle():
     entry = (root / "apps/launcher/mail_agent_launcher_entry.py").read_text(encoding="utf-8")
     gateway = (root / "apps/gateway/mail_agent_gateway/main_v172.py").read_text(encoding="utf-8")
 
-    assert "/assets/v172-ux.js?v=0.18.0" in index
+    assert "/assets/v172-ux.js?v=0.18.1" in index
     assert "data.draftDiscard" in ux or "draftDiscard" in ux
     assert "/discard" in ux
     assert "prepare-mail-reply" in ux
