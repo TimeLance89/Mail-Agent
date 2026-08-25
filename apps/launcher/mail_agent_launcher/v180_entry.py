@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from . import main as launcher
 
-APP_VERSION = "0.18.1"
+APP_VERSION = "0.18.2"
 launcher.APP_VERSION = APP_VERSION
 
 _base_run = launcher._run

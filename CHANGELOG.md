@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.18.2 — 2026-08-25
+
+### Fixed
+
+- restored the `/v1/attention` endpoint by importing its execution-mode enum;
+- added an end-to-end API regression test proving that a decision returned by the briefing can be
+  loaded from “Wartet auf dich” without an HTTP 500 response.
+
 ## 0.18.1 — 2026-08-25
 
 ### Fixed
